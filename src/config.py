@@ -152,6 +152,29 @@ MODEL_PARAMS = {
 TEST_SIZE = 0.2
 RANDOM_STATE = 42
 
+# 시뮬레이터(정책 시나리오 what-if) 전용 모델 하이퍼파라미터.
+# 표본이 279개(31개 행정동x9개 업종)로 작아 min_samples_leaf=2인 기본 모델은
+# 학습에 없던 피처 조합(버스정류장을 몇 개 늘린다 등)에 대해 예측이 급격히
+# 튀는 현상이 있었다(실측: 정류장 5개 추가만으로 예측 매출이 98% 급락).
+# min_samples_leaf를 높여 리프가 더 많은 표본을 평균 내도록 해서, 정확도는
+# 살짝 낮아지더라도 "조건을 조금 바꿨는데 결과가 폭락한다" 같은 비상식적
+# 시뮬레이션 결과를 방지한다. 기본 예측/랭킹에는 영향 없음(별도 모델).
+SIMULATION_MODEL_PARAMS = {
+    "n_estimators": 300,
+    "max_depth": None,
+    "min_samples_leaf": 10,
+    "random_state": 42,
+    "n_jobs": -1,
+}
+
+# 시뮬레이터에 노출할 피처만 별도로 관리한다. competitor_count는 이 데이터에서
+# "경쟁점포가 많을수록 매출도 높게" 나오는데(경쟁 압력이 아니라 상권 자체가
+# 활발해서 생기는 상관관계로 보임), 슬라이더로 "경쟁점포를 줄이면?"을 물으면
+# 정반대의 오해를 부를 수 있어 제외한다. resident_population은 현재 실데이터가
+# 구 단위 2개 값만 가지고 있어 floating_population과 사실상 중복이라 제외한다.
+SIMULATION_FEATURES = ["bus_stop_count", "floating_population"]
+SIMULATION_GRID_RESOLUTION = 20
+
 FEATURE_COLUMNS = [
     "competitor_count",
     "floating_population",
@@ -159,6 +182,18 @@ FEATURE_COLUMNS = [
     "bus_stop_count",
 ]
 TARGET_COLUMN = "sales_amount"
+
+# ---------------------------------------------------------------------------
+# 소상공인 지원 우선순위 스코어 가중치
+# ---------------------------------------------------------------------------
+# 근거: 안양시 소상공인 지원 예산은 "매출이 부진한 곳을 우선 지원한다"는 목적이
+# 가장 크므로 매출 수준에 최고 가중치(45%)를 둔다. 경쟁 강도(30%)는 매출이
+# 비슷해도 점포당 배분 가능한 파이가 작아지는 곳일수록 지원 체감 효과가 크다고
+# 보아 두 번째로 두고, 매출 효율(25%)은 유동인구 대비 매출이 낮다는 건 상권
+# 자체의 구조적 약점(접근성·인지도 등)을 시사하므로 보조 지표로 반영한다.
+PRIORITY_WEIGHT_SALES = 0.45
+PRIORITY_WEIGHT_COMPETITION = 0.30
+PRIORITY_WEIGHT_EFFICIENCY = 0.25
 
 # ---------------------------------------------------------------------------
 # LLM 리포트

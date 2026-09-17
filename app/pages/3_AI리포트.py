@@ -20,7 +20,7 @@ render_topbar()
 st.markdown('<div class="anyang-section-title">🤖 AI 정책분석 리포트</div>', unsafe_allow_html=True)
 st.caption(
     "기존 상권분석 서비스는 숫자·그래프만 제공합니다. "
-    "이 기능은 AI가 예측 근거를 바탕으로 '왜 우선순위가 높은지'를 문장으로 설명해드립니다."
+    "이 기능은 AI가 예측 근거를 바탕으로 '왜 우선순위가 높은지'를 설명해드립니다."
 )
 
 feature_table, trained, error = load_pipeline()
@@ -42,6 +42,28 @@ if not generate_clicked:
     st.info("왼쪽에서 행정동과 업종을 선택한 뒤 'AI 정책분석 리포트 생성' 버튼을 눌러주세요.")
     st.stop()
 
+
+def _bullet_card(title: str, icon: str, items: list, numbered: bool = False) -> str:
+    if not items:
+        items = ["표시할 내용이 없습니다."]
+    if numbered:
+        rows = "".join(
+            f'<li style="margin-bottom:0.4rem;"><b>{i + 1}.</b> {text}</li>' for i, text in enumerate(items)
+        )
+        list_tag = "ol"
+    else:
+        rows = "".join(f'<li style="margin-bottom:0.4rem;">{text}</li>' for text in items)
+        list_tag = "ul"
+    return f"""
+    <div class="anyang-card" style="height:100%;">
+        <h3 style="margin-bottom:0.6rem;">{icon} {title}</h3>
+        <{list_tag} style="margin:0; padding-left:1.2rem; font-size:0.92rem; color:#1B2430; line-height:1.5;">
+            {rows}
+        </{list_tag}>
+    </div>
+    """
+
+
 with st.spinner("AI가 리포트를 작성하고 있습니다..."):
     prediction = predict_sales(trained, selected_dong, selected_category)
 
@@ -56,19 +78,96 @@ with st.spinner("AI가 리포트를 작성하고 있습니다..."):
         priority_row = matched.iloc[0].to_dict()
 
     try:
-        report_text = generate_report(prediction, priority_row)
+        report = generate_report(prediction, priority_row)
     except Exception as exc:  # noqa: BLE001
-        report_text = f"리포트 생성 중 오류가 발생했습니다: {exc}"
+        report = {
+            "diagnosis": [],
+            "evidence_commentary": [],
+            "recommendations": [],
+            "source": "offline",
+            "notice": f"리포트 생성 중 오류가 발생했습니다: {exc}",
+        }
 
+if report.get("notice"):
+    st.info(f"ℹ️ {report['notice']}")
+
+source_badge = "🟢 OpenAI GPT 생성" if report.get("source") == "openai" else "⚪ 오프라인 규칙 기반 생성"
 st.markdown(
     f"""
-    <div class="anyang-card">
-        <h3>{selected_dong} · {selected_category} 정책분석 리포트</h3>
+    <div class="anyang-hero" style="padding:1.6rem 1.8rem; text-align:left;">
+        <div class="anyang-badge">{source_badge}</div>
+        <h1 style="font-size:1.4rem; margin-bottom:0.2rem;">{selected_dong} · {selected_category} 정책분석 리포트</h1>
+        <p class="subtitle" style="font-size:0.9rem; margin-bottom:0;">예측 매출과 소상공인 지원 우선순위를 근거로 AI가 해석한 결과입니다.</p>
     </div>
     """,
     unsafe_allow_html=True,
 )
-st.write(report_text)
+
+m1, m2 = st.columns(2)
+with m1:
+    st.markdown(
+        f"""<div class="anyang-metric-box"><div class="value">{prediction['predicted_sales']:,.0f}원</div>
+        <div class="label">예상 매출(추정)</div></div>""",
+        unsafe_allow_html=True,
+    )
+with m2:
+    if priority_row:
+        st.markdown(
+            f"""<div class="anyang-metric-box"><div class="value">{priority_row['priority_score']:.1f}점</div>
+            <div class="label">소상공인 지원 우선순위</div></div>""",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """<div class="anyang-metric-box"><div class="value">-</div>
+            <div class="label">우선순위 데이터 없음</div></div>""",
+            unsafe_allow_html=True,
+        )
+
+st.markdown('<div class="anyang-section-title">📌 근거 데이터</div>', unsafe_allow_html=True)
+st.caption("AI가 문장을 지어낸 게 아니라, 아래 실제 수치를 바탕으로 해석한 결과입니다.")
+
+features = prediction["features"]
+e1, e2, e3, e4 = st.columns(4)
+evidence_stats = [
+    (e1, "🏪", "경쟁점포수", f"{features['competitor_count']:.0f}개", "소상공인시장진흥공단 상가정보"),
+    (e2, "🚶", "유동인구(가중합)", f"{features['floating_population']:,.0f}", "경기데이터드림 유동인구_안양시"),
+    (e3, "🏠", "거주인구", f"{features['resident_population']:,.0f}명", "안양시 주민등록인구 통계"),
+    (e4, "🚌", "버스정류장(반경 300m)", f"{features['bus_stop_count']:.0f}개", "국토교통부 버스정류소정보(TAGO)"),
+]
+for col, icon, label, value, source in evidence_stats:
+    with col:
+        st.markdown(
+            f"""
+            <div class="anyang-card" style="text-align:center; padding:1.1rem 0.8rem;">
+                <div style="font-size:1.4rem;">{icon}</div>
+                <div style="font-size:1.15rem; font-weight:800; color:#0B5ED7; margin:0.3rem 0;">{value}</div>
+                <div style="font-size:0.82rem; color:#1B2430; font-weight:600;">{label}</div>
+                <div style="font-size:0.68rem; color:#9AA5B1; margin-top:0.3rem;">출처: {source}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+st.write("")
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.markdown(_bullet_card("진단", "🔍", report.get("diagnosis", [])), unsafe_allow_html=True)
+with c2:
+    st.markdown(_bullet_card("근거 해석", "📊", report.get("evidence_commentary", [])), unsafe_allow_html=True)
+with c3:
+    st.markdown(_bullet_card("정책적 시사점 · 추천", "🎯", report.get("recommendations", []), numbered=True), unsafe_allow_html=True)
+
+st.markdown(
+    """
+    <div style="margin-top:1.4rem; padding:0.9rem 1.1rem; background:#F5F8FC; border:1px solid #E3E9F1;
+                border-radius:12px; font-size:0.75rem; color:#6B7684;">
+        <b>데이터 출처</b> · 카드소비 데이터(경기데이터드림, 2026년 1~3월) · 상가(상권)정보(소상공인시장진흥공단) ·
+        주민등록인구 통계(안양시) · 버스정류소정보(국토교통부 TAGO) · 유동인구_안양시(경기데이터드림)
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 with st.expander("🔍 리포트에 사용된 원본 예측 데이터"):
     st.json(
@@ -76,5 +175,6 @@ with st.expander("🔍 리포트에 사용된 원본 예측 데이터"):
             "예상_매출": prediction["predicted_sales"],
             "주요_피처": prediction["features"],
             "우선순위_정보": priority_row,
+            "리포트_원본": report,
         }
     )
