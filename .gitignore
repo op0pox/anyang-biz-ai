@@ -1,0 +1,12 @@
+venv-anyang/
+__pycache__/
+*.pyc
+.env
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+.DS_Store
+
+# 원본 데이터 다운로드 폴더 (수 GB, 버전관리 대상 아님 — data/raw/ 심볼릭 링크가 이 폴더를 가리킴)
+소상공인생존율예측데이터셋모음/

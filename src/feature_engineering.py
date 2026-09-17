@@ -1,0 +1,149 @@
+"""행정동 x 업종(대분류) 단위로 원본 데이터를 집계해 모델 학습용 피처 테이블을 만든다."""
+
+from typing import Dict
+
+import numpy as np
+import pandas as pd
+
+from src.config import (
+    ANYANG_DONGS,
+    BUS_STOP_RADIUS_M,
+    FLOATING_POPULATION_HOUR_WEIGHTS,
+)
+from src.data_loader import (
+    get_dong_gu_map,
+    load_bus_stops,
+    load_card_sales,
+    load_floating_population,
+    load_resident_population,
+    load_stores,
+)
+
+EARTH_RADIUS_M = 6_371_000
+
+
+def _dong_to_gu_map() -> Dict[str, str]:
+    """행정동 -> 소속구 매핑. 실제 상가정보 데이터가 있으면 그 데이터에서 뽑은
+    진짜 행정동/구 목록을 쓰고, 없으면(가상 데이터 등) config의 예시 목록으로 폴백한다."""
+    real_mapping = get_dong_gu_map()
+    if real_mapping:
+        return real_mapping
+
+    mapping = {}
+    for gu, dongs in ANYANG_DONGS.items():
+        for dong in dongs:
+            mapping[dong] = gu
+    return mapping
+
+
+def _hour_weight(hour: float) -> float:
+    if pd.isna(hour):
+        return 1.0
+    for hour_range, weight in FLOATING_POPULATION_HOUR_WEIGHTS.items():
+        if int(hour) in hour_range:
+            return weight
+    return 1.0
+
+
+def _haversine_m(lat1, lon1, lat2, lon2):
+    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+    return 2 * EARTH_RADIUS_M * np.arcsin(np.sqrt(a))
+
+
+def _dong_centroids(stores: pd.DataFrame) -> pd.DataFrame:
+    """행정동별 상가 위경도 평균을 그 행정동의 대표 좌표(centroid)로 사용한다."""
+    valid = stores.dropna(subset=["lat", "lon", "dong"])
+    return valid.groupby("dong", as_index=False)[["lat", "lon"]].mean()
+
+
+def _bus_stop_counts(centroids: pd.DataFrame, bus_stops: pd.DataFrame) -> pd.DataFrame:
+    """행정동 centroid 반경 BUS_STOP_RADIUS_M 안에 있는 버스정류장 수를 센다."""
+    if centroids.empty or bus_stops.empty:
+        return pd.DataFrame({"dong": centroids.get("dong", pd.Series(dtype=str)), "bus_stop_count": 0})
+
+    counts = []
+    for _, row in centroids.iterrows():
+        dist = _haversine_m(row["lat"], row["lon"], bus_stops["lat"].values, bus_stops["lon"].values)
+        counts.append(int((dist <= BUS_STOP_RADIUS_M).sum()))
+    return pd.DataFrame({"dong": centroids["dong"].values, "bus_stop_count": counts})
+
+
+def _floating_population_by_dong() -> pd.DataFrame:
+    """구 단위로만 제공되는 유동인구를, 소속 행정동에 동일하게 배분한다.
+
+    한계: 만안구/동안구 2개 구 단위 데이터라 같은 구에 속한 행정동들은
+    유동인구 피처값이 동일하게 들어간다(README/모델 상세정보에 명시).
+    """
+    fp = load_floating_population()
+    fp = fp.dropna(subset=["population"])
+    fp["weight"] = fp["hour"].apply(_hour_weight) if "hour" in fp.columns else 1.0
+    fp["weighted_population"] = fp["population"] * fp["weight"]
+    gu_totals = fp.groupby("gu", as_index=False)["weighted_population"].sum()
+    gu_totals = gu_totals.rename(columns={"weighted_population": "floating_population"})
+
+    dong_gu = _dong_to_gu_map()
+    rows = [{"dong": dong, "gu": gu} for dong, gu in dong_gu.items()]
+    dong_gu_df = pd.DataFrame(rows)
+    merged = dong_gu_df.merge(gu_totals, on="gu", how="left")
+    return merged[["dong", "floating_population"]]
+
+
+def build_feature_table() -> pd.DataFrame:
+    """행정동 x 업종 조합별 target(매출)과 피처를 담은 데이터프레임을 반환한다.
+
+    결측치 처리 방침:
+      - sales_amount/sales_count 결측(해당 조합 매출 기록 없음) -> 0
+      - competitor_count 결측(해당 조합 점포 없음) -> 0
+      - floating_population/resident_population/bus_stop_count 결측
+        (좌표 누락 등으로 계산 불가) -> 전체 행정동 중앙값으로 대체
+    """
+    card_sales = load_card_sales()
+    stores = load_stores()
+    resident_population = load_resident_population()
+    bus_stops = load_bus_stops()
+
+    dongs = sorted(set(card_sales["dong"]) | set(stores["dong"].dropna()))
+    categories = sorted(set(card_sales["category"]) | set(stores["category"].dropna()))
+    grid = pd.MultiIndex.from_product([dongs, categories], names=["dong", "category"]).to_frame(index=False)
+
+    sales_agg = card_sales.groupby(["dong", "category"], as_index=False).agg(
+        sales_amount=("sales_amount", "sum"),
+        sales_count=("sales_count", "sum"),
+    )
+    competitor_agg = (
+        stores.dropna(subset=["dong"])
+        .groupby(["dong", "category"], as_index=False)
+        .size()
+        .rename(columns={"size": "competitor_count"})
+    )
+
+    table = grid.merge(sales_agg, on=["dong", "category"], how="left")
+    table = table.merge(competitor_agg, on=["dong", "category"], how="left")
+    table["sales_amount"] = table["sales_amount"].fillna(0)
+    table["sales_count"] = table["sales_count"].fillna(0)
+    table["competitor_count"] = table["competitor_count"].fillna(0)
+
+    floating = _floating_population_by_dong()
+    centroids = _dong_centroids(stores)
+    bus_counts = _bus_stop_counts(centroids, bus_stops)
+
+    table = table.merge(floating, on="dong", how="left")
+    table = table.merge(resident_population, on="dong", how="left")
+    table = table.merge(bus_counts, on="dong", how="left")
+
+    for col in ["floating_population", "resident_population", "bus_stop_count"]:
+        median_value = table[col].median()
+        table[col] = table[col].fillna(median_value if pd.notna(median_value) else 0)
+
+    return table
+
+
+def get_available_dongs(feature_table: pd.DataFrame) -> list:
+    return sorted(feature_table["dong"].unique().tolist())
+
+
+def get_available_categories(feature_table: pd.DataFrame) -> list:
+    return sorted(feature_table["category"].unique().tolist())

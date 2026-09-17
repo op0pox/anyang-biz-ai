@@ -1,0 +1,177 @@
+/* 안양시 소상공인 상권 AI — 커스텀 웹사이트 스타일
+   안양시 상징색(청량한 블루·그린 계열) 톤앤매너로 기본 Streamlit 테마를 재구성 */
+
+:root {
+    --anyang-primary: #0B5ED7;
+    --anyang-primary-dark: #08408f;
+    --anyang-accent: #17A673;
+    --anyang-bg: #F5F8FC;
+    --anyang-card-bg: #FFFFFF;
+    --anyang-text: #1B2430;
+    --anyang-muted: #6B7684;
+    --anyang-border: #E3E9F1;
+}
+
+/* 전체 배경 */
+.stApp {
+    background-color: var(--anyang-bg);
+}
+
+/* 기본 여백 정리 */
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1100px;
+}
+
+/* 상단 고정 서비스 헤더 */
+.anyang-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.9rem 1.4rem;
+    background: linear-gradient(90deg, var(--anyang-primary) 0%, var(--anyang-primary-dark) 100%);
+    border-radius: 14px;
+    color: white;
+    margin-bottom: 1.6rem;
+    box-shadow: 0 4px 14px rgba(11, 94, 215, 0.18);
+}
+.anyang-topbar .brand {
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: -0.2px;
+}
+.anyang-topbar .tagline {
+    font-size: 0.82rem;
+    opacity: 0.9;
+}
+
+/* 히어로(랜딩) 섹션 */
+.anyang-hero {
+    background: linear-gradient(135deg, #ffffff 0%, #eef4fd 100%);
+    border: 1px solid var(--anyang-border);
+    border-radius: 20px;
+    padding: 2.6rem 2.2rem;
+    margin-bottom: 1.8rem;
+    text-align: center;
+}
+.anyang-hero h1 {
+    font-size: 2.0rem;
+    font-weight: 800;
+    color: var(--anyang-text);
+    margin-bottom: 0.6rem;
+}
+.anyang-hero p.subtitle {
+    font-size: 1.05rem;
+    color: var(--anyang-muted);
+    margin-bottom: 0;
+}
+.anyang-badge {
+    display: inline-block;
+    background: rgba(23, 166, 115, 0.12);
+    color: var(--anyang-accent);
+    font-size: 0.78rem;
+    font-weight: 700;
+    padding: 0.28rem 0.75rem;
+    border-radius: 999px;
+    margin-bottom: 0.9rem;
+    letter-spacing: 0.2px;
+}
+
+/* 카드형 레이아웃 */
+.anyang-card {
+    background: var(--anyang-card-bg);
+    border: 1px solid var(--anyang-border);
+    border-radius: 16px;
+    padding: 1.5rem 1.4rem;
+    height: 100%;
+    box-shadow: 0 2px 8px rgba(20, 40, 80, 0.05);
+}
+.anyang-card .icon {
+    font-size: 1.6rem;
+    margin-bottom: 0.5rem;
+}
+.anyang-card h3 {
+    font-size: 1.02rem;
+    font-weight: 700;
+    color: var(--anyang-text);
+    margin-bottom: 0.4rem;
+}
+.anyang-card p {
+    font-size: 0.88rem;
+    color: var(--anyang-muted);
+    line-height: 1.5;
+    margin-bottom: 0;
+}
+
+/* 비교 테이블 스타일 카드 */
+.anyang-compare {
+    background: #fff;
+    border: 1px solid var(--anyang-border);
+    border-radius: 14px;
+    padding: 1rem 1.2rem;
+    font-size: 0.86rem;
+    color: var(--anyang-text);
+}
+
+/* 섹션 타이틀 */
+.anyang-section-title {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--anyang-text);
+    margin: 1.6rem 0 0.8rem 0;
+}
+
+/* 지표 강조 박스 */
+.anyang-metric-box {
+    background: linear-gradient(135deg, #0B5ED7 0%, #17A673 100%);
+    border-radius: 16px;
+    padding: 1.4rem 1.6rem;
+    color: white;
+    text-align: center;
+}
+.anyang-metric-box .value {
+    font-size: 1.9rem;
+    font-weight: 800;
+}
+.anyang-metric-box .label {
+    font-size: 0.85rem;
+    opacity: 0.9;
+}
+
+/* 버튼 */
+.stButton > button {
+    background-color: var(--anyang-primary);
+    color: white;
+    border-radius: 10px;
+    border: none;
+    padding: 0.55rem 1.2rem;
+    font-weight: 600;
+}
+.stButton > button:hover {
+    background-color: var(--anyang-primary-dark);
+    color: white;
+}
+
+/* 사이드바 */
+section[data-testid="stSidebar"] {
+    background-color: #ffffff;
+    border-right: 1px solid var(--anyang-border);
+}
+
+/* 우선순위 랭킹 행 */
+.anyang-rank-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 0.9rem;
+    border-radius: 10px;
+    background: #fff;
+    border: 1px solid var(--anyang-border);
+    margin-bottom: 0.45rem;
+}
+.anyang-rank-row .rank-num {
+    font-weight: 800;
+    color: var(--anyang-primary);
+    width: 2rem;
+}
