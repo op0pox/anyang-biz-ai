@@ -111,11 +111,22 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+_confidence_color = {"높음": "#17A673", "보통": "#0B5ED7", "낮음": "#c0392b"}[prediction["confidence_level"]]
 m1, m2 = st.columns(2)
 with m1:
     st.markdown(
         f"""<div class="anyang-metric-box"><div class="value">{prediction['predicted_sales']:,.0f}원</div>
         <div class="label">예상 매출(추정)</div></div>""",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f"""
+        <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <span style="background:{_confidence_color}; color:white; font-size:0.75rem; font-weight:700;
+                         padding:0.2rem 0.6rem; border-radius:999px;">예측 신뢰도 {prediction['confidence_level']}</span>
+            <span style="font-size:0.78rem; color:#6B7684;">예상 범위 {prediction['predicted_low']:,.0f}원 ~ {prediction['predicted_high']:,.0f}원</span>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 with m2:
@@ -131,6 +142,18 @@ with m2:
             <div class="label">우선순위 데이터 없음</div></div>""",
             unsafe_allow_html=True,
         )
+
+if prediction["low_sample_warning"]:
+    st.markdown(
+        f"""
+        <div class="anyang-card" style="border-left:4px solid #c0392b; margin-bottom:0.8rem;">
+            <b>⚠️ 표본 부족 경고</b> — {selected_dong}에는 '{selected_category}' 업종 점포가
+            관측되지 않았습니다. 아래 예측은 다른 행정동의 데이터를 바탕으로 한 추정치이며
+            신뢰도가 낮으니 참고용으로만 활용해주세요.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 st.markdown('<div class="anyang-section-title">📌 근거 데이터</div>', unsafe_allow_html=True)
 st.caption("AI가 문장을 지어낸 게 아니라, 아래 실제 수치를 바탕으로 해석한 결과입니다.")

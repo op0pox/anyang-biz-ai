@@ -12,6 +12,16 @@
     --anyang-border: #E3E9F1;
 }
 
+/* Streamlit 기본 개발용 UI 숨김 — 심사위원에게는 "만들다 만 개발 도구"가 아니라
+   완성된 서비스로 보여야 하므로 제거한다. Deploy 버튼/메뉴만 숨기면 그걸 담고 있던
+   빈 툴바 막대(header, 높이 60px)가 그대로 남아 UI에 여백 있는 빈 줄로 보이므로,
+   header 전체(stHeader)를 숨긴다. 사이드바 접기 버튼(stSidebarCollapseButton)은
+   실측으로 확인한 결과 header 밖 <section data-testid="stSidebar"> 내부의 완전히
+   별도 요소라 영향 없다. */
+[data-testid="stHeader"] {
+    display: none !important;
+}
+
 /* 전체 배경 */
 .stApp {
     background-color: var(--anyang-bg);

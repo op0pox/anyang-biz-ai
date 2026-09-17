@@ -43,6 +43,7 @@ result = predict_sales(trained, selected_dong, selected_category)
 if result is None:
     st.warning(f"'{selected_dong}'의 '{selected_category}' 업종에 대한 예측 데이터를 찾을 수 없습니다. 다른 조합을 선택해주세요.")
 else:
+    _confidence_color = {"높음": "#17A673", "보통": "#0B5ED7", "낮음": "#c0392b"}[result["confidence_level"]]
     c1, c2 = st.columns([1, 1])
     with c1:
         st.markdown(
@@ -54,6 +55,25 @@ else:
             """,
             unsafe_allow_html=True,
         )
+        st.markdown(
+            f"""
+            <div style="margin-top:0.5rem; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                <span style="background:{_confidence_color}; color:white; font-size:0.75rem; font-weight:700;
+                             padding:0.2rem 0.6rem; border-radius:999px;">예측 신뢰도 {result['confidence_level']}</span>
+                <span style="font-size:0.78rem; color:#6B7684;">예상 범위 {result['predicted_low']:,.0f}원 ~ {result['predicted_high']:,.0f}원</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if result["low_sample_warning"]:
+            st.caption(
+                f"⚠️ {selected_dong}에는 '{selected_category}' 업종 점포가 관측되지 않아, "
+                "다른 지역 데이터를 바탕으로 한 추정치입니다 — 신뢰도가 낮습니다."
+            )
+        elif result["confidence_level"] == "낮음":
+            st.caption(
+                f"※ 관측된 경쟁점포 수({result['competitor_count']:.0f}개)가 적어 예측 신뢰도가 낮습니다."
+            )
     with c2:
         st.markdown(
             f"""
@@ -167,6 +187,13 @@ if ranking.empty:
 else:
     chart_df = ranking[["category", "predicted_sales"]].set_index("category")
     st.bar_chart(chart_df, width="stretch")
+
+    low_confidence_categories = ranking.loc[ranking["confidence_level"] == "낮음", "category"].tolist()
+    if low_confidence_categories:
+        st.caption(
+            "⚠️ 표본(관측 경쟁점포 수)이 적어 예측 신뢰도가 낮은 업종: "
+            + ", ".join(low_confidence_categories)
+        )
 
 st.markdown('<div class="anyang-section-title">🗺️ 상권 지도</div>', unsafe_allow_html=True)
 try:

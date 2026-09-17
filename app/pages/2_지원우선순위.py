@@ -26,6 +26,7 @@ from src.config import (  # noqa: E402
 from src.model import (  # noqa: E402
     compute_support_priority,
     match_safety_net,
+    rank_categories_for_dong,
     recommend_support_type,
     simulate_dong_scenario,
 )
@@ -198,6 +199,14 @@ if redevelopment_risk:
         unsafe_allow_html=True,
     )
     st.caption("출처: 경기도 안양시_일반 정비사업 추진현황(안양시 AI정책과 발행)")
+
+st.write("")
+if st.button(f"🤖 {detail_dong} AI 정책분석 리포트 보러가기", key="goto_ai_report", width="stretch"):
+    ranking_for_dong = rank_categories_for_dong(trained, detail_dong)
+    st.session_state["report_dong"] = detail_dong
+    if not ranking_for_dong.empty:
+        st.session_state["report_category"] = ranking_for_dong.iloc[0]["category"]
+    st.switch_page("pages/3_AI리포트.py")
 
 st.markdown('<div class="anyang-section-title">우선순위 스코어 비교</div>', unsafe_allow_html=True)
 chart_df = display_df[["dong", "priority_score"]].set_index("dong")

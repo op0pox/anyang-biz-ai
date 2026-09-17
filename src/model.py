@@ -12,6 +12,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.inspection import partial_dependence
 
 from src.config import (
+    CONFIDENCE_HIGH_MIN_COMPETITORS,
+    CONFIDENCE_LOW_MAX_COMPETITORS,
     FEATURE_COLUMNS,
     MODEL_PARAMS,
     PRIORITY_WEIGHT_COMPETITION,
@@ -107,6 +109,30 @@ def train_model(feature_table: pd.DataFrame) -> TrainedModel:
     )
 
 
+def _confidence_level(competitor_count: float) -> str:
+    """관측된 경쟁점포 수를 표본 크기로 보아 예측 신뢰도 등급(낮음/보통/높음)을 매긴다."""
+    if competitor_count < CONFIDENCE_LOW_MAX_COMPETITORS:
+        return "낮음"
+    if competitor_count < CONFIDENCE_HIGH_MIN_COMPETITORS:
+        return "보통"
+    return "높음"
+
+
+def _predicted_range(trained: TrainedModel, features: pd.DataFrame) -> tuple:
+    """예측값의 대략적 범위(25~75백분위)를 구한다.
+
+    기본 모델(model)의 트리별 예측을 그대로 쓰면 트리 분기 잡음이 커(시뮬레이터가
+    겪은 것과 같은 문제) 이상치 행에서 범위가 수백~수천 배로 벌어져 사용자에게
+    그대로 보여주기 부적절하다. 대신 더 보수적인 simulation_model(min_samples_leaf=10)의
+    트리별 예측 분포를 쓴다 — 여전히 넓을 수 있지만 훨씬 안정적이다.
+    """
+    features_arr = features.to_numpy()
+    tree_preds_log = np.array([est.predict(features_arr)[0] for est in trained.simulation_model.estimators_])
+    low = float(np.expm1(np.percentile(tree_preds_log, 25)))
+    high = float(np.expm1(np.percentile(tree_preds_log, 75)))
+    return low, high
+
+
 def predict_sales(trained: TrainedModel, dong: str, category: str) -> Optional[dict]:
     """특정 (행정동, 업종) 조합의 예상 매출과 근거 피처값을 반환한다."""
     row = trained.feature_table[
@@ -117,13 +143,20 @@ def predict_sales(trained: TrainedModel, dong: str, category: str) -> Optional[d
 
     features = row[trained.feature_columns]
     predicted = float(np.expm1(trained.model.predict(features)[0]))
+    predicted_low, predicted_high = _predicted_range(trained, features)
+    competitor_count = float(row["competitor_count"].iloc[0])
 
     return {
         "dong": dong,
         "category": category,
         "predicted_sales": predicted,
+        "predicted_low": predicted_low,
+        "predicted_high": predicted_high,
         "actual_sales": float(row["sales_amount"].iloc[0]),
         "features": features.iloc[0].to_dict(),
+        "competitor_count": competitor_count,
+        "confidence_level": _confidence_level(competitor_count),
+        "low_sample_warning": competitor_count <= 0,
     }
 
 
@@ -202,7 +235,17 @@ def get_feature_importance(trained: TrainedModel) -> pd.DataFrame:
 def predict_all(trained: TrainedModel) -> pd.DataFrame:
     """전체 행정동 x 업종 조합에 대한 예측값을 붙인 테이블을 반환한다."""
     table = trained.feature_table.copy()
-    table["predicted_sales"] = np.expm1(trained.model.predict(table[trained.feature_columns]))
+    X = table[trained.feature_columns]
+    table["predicted_sales"] = np.expm1(trained.model.predict(X))
+
+    # predict_sales()와 동일한 신뢰도/범위 로직을 전체 테이블에 한 번에 적용한다
+    # (트리 300개 x 행 279개 수준이라 벡터화해도 비용이 작다).
+    X_arr = X.to_numpy()
+    tree_preds_log = np.array([est.predict(X_arr) for est in trained.simulation_model.estimators_])
+    table["predicted_low"] = np.expm1(np.percentile(tree_preds_log, 25, axis=0))
+    table["predicted_high"] = np.expm1(np.percentile(tree_preds_log, 75, axis=0))
+    table["confidence_level"] = table["competitor_count"].apply(_confidence_level)
+    table["low_sample_warning"] = table["competitor_count"] <= 0
     return table
 
 
