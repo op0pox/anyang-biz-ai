@@ -362,6 +362,51 @@ def load_stores() -> pd.DataFrame:
     return out
 
 
+def load_stores_snapshot(quarter: str) -> pd.DataFrame:
+    """특정 분기(예: '202403')의 상가정보 스냅샷을 로드한다. load_stores()와 달리
+    상가업소번호(id)를 포함해 반환한다 — 두 분기를 비교해 폐업 흐름을 추정하는 데
+    쓰인다(feature_engineering.compute_closure_rate_table 참고). 상가업소번호가
+    분기 간 안정적인 ID임은 샘플 검증 완료(CLAUDE.md 참고).
+    """
+    from src.config import DATA_SOURCES_DIR
+
+    snapshot_dir = DATA_SOURCES_DIR / "stores" / quarter
+    if not snapshot_dir.exists():
+        raise DataFileNotFoundError(f"'{quarter}' 분기 상가정보를 data/sources/stores/{quarter}/ 에서 찾을 수 없습니다.")
+    candidates = list(snapshot_dir.glob("*.csv")) + list(snapshot_dir.glob("*.xlsx")) + list(snapshot_dir.glob("*.xls"))
+    if not candidates:
+        raise DataFileNotFoundError(f"'{quarter}' 분기 상가정보 파일이 data/sources/stores/{quarter}/ 에 없습니다.")
+    path = candidates[0]
+
+    columns = _peek_header(path)
+    hints = COLUMN_HINTS["stores"]
+    id_col = _find_column_name(columns, ["상가업소번호"])
+    dong_col = _find_column_name(columns, hints["dong"])
+    category_col = _find_column_name(columns, hints["category"])
+    address_cols = [
+        c for c in columns if any(k in str(c) for k in ("주소", "시군구", "소재지", "행정동명", "시도"))
+    ]
+
+    needed = {id_col, dong_col, category_col, *address_cols}
+    needed.discard(None)
+    usecols = list(needed) if needed else None
+
+    df = _read_table_flex(path, usecols=usecols)
+    df = _filter_by_city(df)
+
+    out = pd.DataFrame(
+        {
+            "id": df[id_col] if id_col else None,
+            "dong": df[dong_col].astype(str).str.strip() if dong_col else None,
+            "category": df[category_col].astype(str).str.strip() if category_col else "미분류",
+        }
+    ).dropna(subset=["id"])
+
+    if category_col == "상권업종대분류명":
+        out["category"] = out["category"].map(STORE_TO_CARD_CATEGORY_MAP).fillna(out["category"])
+    return out
+
+
 def _make_fallback_floating_population() -> pd.DataFrame:
     """API 키가 없거나 호출에 실패했을 때 사용할 가상 유동인구 데이터."""
     import numpy as np
@@ -775,3 +820,49 @@ def load_bus_stops() -> pd.DataFrame:
         }
     ).dropna(subset=["lat", "lon"])
     return out
+
+
+def load_redevelopment_projects() -> pd.DataFrame:
+    """정비사업(재건축·리모델링) 추진현황을 로드한다. 안양시가 직접 발행한 데이터.
+
+    이미 완료되어 더 이상 이주 리스크가 없는 사업(사업단계="준공" 또는
+    현추진상황="이전고시")은 제외한다 — REDEVELOPMENT_COMPLETED_* (config.py) 참고.
+    소량(수십 건) 데이터셋이라 RAW_FILE_STEMS 자동탐색 패턴 대신 data/sources/
+    redevelopment/ 폴더를 직접 스캔한다.
+    """
+    from src.config import DATA_SOURCES_DIR, REDEVELOPMENT_COMPLETED_STAGES, REDEVELOPMENT_COMPLETED_STATUSES
+
+    source_dir = DATA_SOURCES_DIR / "redevelopment"
+    empty = pd.DataFrame(columns=["name", "lat", "lon", "households", "stage", "status"])
+    if not source_dir.exists():
+        return empty
+
+    candidates = list(source_dir.glob("*.csv")) + list(source_dir.glob("*.xlsx")) + list(source_dir.glob("*.xls"))
+    if not candidates:
+        return empty
+
+    df = _read_table_flex(candidates[0])
+    name_col = _find_column(df, ["정비구역명"])
+    lat_col = _find_column(df, ["위도"])
+    lon_col = _find_column(df, ["경도"])
+    households_col = _find_column(df, ["사업시행세대수총계", "세대수"])
+    stage_col = _find_column(df, ["사업단계"])
+    status_col = _find_column(df, ["현추진상황"])
+
+    if lat_col is None or lon_col is None:
+        return empty
+
+    out = pd.DataFrame(
+        {
+            "name": df[name_col].astype(str).str.strip() if name_col else "정비사업",
+            "lat": pd.to_numeric(df[lat_col], errors="coerce"),
+            "lon": pd.to_numeric(df[lon_col], errors="coerce"),
+            "households": pd.to_numeric(df[households_col], errors="coerce").fillna(0) if households_col else 0,
+            "stage": df[stage_col].astype(str).str.strip() if stage_col else "",
+            "status": df[status_col].astype(str).str.strip() if status_col else "",
+        }
+    ).dropna(subset=["lat", "lon"])
+
+    out = out[~out["stage"].isin(REDEVELOPMENT_COMPLETED_STAGES)]
+    out = out[~out["status"].isin(REDEVELOPMENT_COMPLETED_STATUSES)]
+    return out.reset_index(drop=True)

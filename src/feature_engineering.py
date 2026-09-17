@@ -71,6 +71,76 @@ def _bus_stop_counts(centroids: pd.DataFrame, bus_stops: pd.DataFrame) -> pd.Dat
     return pd.DataFrame({"dong": centroids["dong"].values, "bus_stop_count": counts})
 
 
+def get_redevelopment_risk_by_dong() -> Dict[str, dict]:
+    """행정동 centroid 반경 REDEVELOPMENT_RADIUS_M 안에 있는 활성(미완료) 정비사업을 찾는다.
+
+    학습된 모델의 피처나 우선순위 스코어 계산식에는 넣지 않는다 — 정확한 이주 시점
+    데이터가 부족해 정량 모델에 넣기엔 근거가 약하고, 화면에 "참고 경고"로 보여주는
+    것이 더 정직하다(README/CLAUDE.md 스코프 결정 참고). 정비사업이 없는 행정동은
+    결과 dict에 아예 키가 없다(빈 리스트가 아니라 부재로 처리해 UI에서 조건부로만 표시).
+    """
+    from src.config import REDEVELOPMENT_RADIUS_M
+    from src.data_loader import load_redevelopment_projects
+
+    stores = load_stores()
+    centroids = _dong_centroids(stores)
+    projects = load_redevelopment_projects()
+
+    result: Dict[str, dict] = {}
+    if centroids.empty or projects.empty:
+        return result
+
+    for _, row in centroids.iterrows():
+        dist = _haversine_m(row["lat"], row["lon"], projects["lat"].values, projects["lon"].values)
+        nearby = projects[dist <= REDEVELOPMENT_RADIUS_M]
+        if not nearby.empty:
+            result[row["dong"]] = {
+                "count": int(len(nearby)),
+                "total_households": int(nearby["households"].sum()),
+                "projects": nearby[["name", "stage", "status", "households"]].to_dict("records"),
+            }
+    return result
+
+
+def compute_closure_rate_table(old_quarter: str = "202403", new_quarter: str = "202606") -> pd.DataFrame:
+    """두 분기 상가정보 스냅샷을 상가업소번호로 비교해 행정동×업종별 "폐업 후보 비율"을
+    계산한다. 학습된 모델의 피처나 우선순위 스코어에는 넣지 않는다 — 실제 폐업 외
+    이전·업종변경·데이터 정정 등도 섞여 있을 수 있는 추정치라, 정량 모델보다는
+    화면에 별도로 보여주는 참고 지표로 쓰는 게 더 정직하다(정비사업 리스크와 같은
+    스코프 결정). 상가업소번호가 분기 간 안정적인 ID임은 샘플 검증 완료(CLAUDE.md 참고).
+    """
+    from src.data_loader import load_stores_snapshot
+
+    old = load_stores_snapshot(old_quarter)
+    new = load_stores_snapshot(new_quarter)
+
+    # 두 분기 사이 행정동 개편(명칭 변경·통폐합)이 있으면, 이름이 바뀐 동은 "폐업률
+    # 100%"처럼 완전히 잘못된 값이 나온다(실제 확인된 사례: 202403의 박달1동+박달2동이
+    # 202606엔 박달동으로 통합, 안양8동+안양9동이 명학동/병목안동/호현동으로 개편됨 —
+    # 실제 폐업이 아니라 동 이름 자체가 바뀐 것). 두 분기 모두에 존재하는 동만 비교한다.
+    common_dongs = set(old["dong"].unique()) & set(new["dong"].unique())
+    old = old[old["dong"].isin(common_dongs)]
+    new = new[new["dong"].isin(common_dongs)]
+
+    old_ids_by_group = old.groupby(["dong", "category"])["id"].apply(set)
+    new_ids_by_group = new.groupby(["dong", "category"])["id"].apply(set)
+
+    rows = []
+    for (dong, category), old_ids in old_ids_by_group.items():
+        new_ids = new_ids_by_group.get((dong, category), set())
+        closed_ids = old_ids - new_ids
+        rows.append(
+            {
+                "dong": dong,
+                "category": category,
+                "old_count": len(old_ids),
+                "closed_count": len(closed_ids),
+                "closure_rate": (len(closed_ids) / len(old_ids)) if old_ids else 0.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _floating_population_by_dong() -> pd.DataFrame:
     """구 단위로만 제공되는 유동인구를, 소속 행정동에 동일하게 배분한다.
 

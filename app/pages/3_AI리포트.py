@@ -9,7 +9,15 @@ APP_DIR = Path(__file__).resolve().parent.parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from common import SERVICE_NAME, inject_css, load_pipeline, render_topbar, show_pipeline_error  # noqa: E402
+from common import (  # noqa: E402
+    SERVICE_NAME,
+    inject_css,
+    load_closure_rate_table,
+    load_pipeline,
+    load_redevelopment_risk,
+    render_topbar,
+    show_pipeline_error,
+)
 from src.ai_report import generate_report  # noqa: E402
 from src.model import compute_support_priority, predict_sales  # noqa: E402
 
@@ -128,12 +136,28 @@ st.markdown('<div class="anyang-section-title">📌 근거 데이터</div>', uns
 st.caption("AI가 문장을 지어낸 게 아니라, 아래 실제 수치를 바탕으로 해석한 결과입니다.")
 
 features = prediction["features"]
-e1, e2, e3, e4 = st.columns(4)
+closure_table = load_closure_rate_table()
+closure_row = None
+if closure_table is not None:
+    matched_closure = closure_table[
+        (closure_table["dong"] == selected_dong) & (closure_table["category"] == selected_category)
+    ]
+    if not matched_closure.empty:
+        closure_row = matched_closure.iloc[0]
+
+e1, e2, e3, e4, e5 = st.columns(5)
 evidence_stats = [
     (e1, "🏪", "경쟁점포수", f"{features['competitor_count']:.0f}개", "소상공인시장진흥공단 상가정보"),
     (e2, "🚶", "유동인구(가중합)", f"{features['floating_population']:,.0f}", "경기데이터드림 유동인구_안양시"),
     (e3, "🏠", "거주인구", f"{features['resident_population']:,.0f}명", "안양시 주민등록인구 통계"),
     (e4, "🚌", "버스정류장(반경 300m)", f"{features['bus_stop_count']:.0f}개", "국토교통부 버스정류소정보(TAGO)"),
+    (
+        e5,
+        "📉",
+        "최근 폐업 후보 비율(추정)",
+        f"{closure_row['closure_rate']*100:.0f}%" if closure_row is not None else "정보 없음",
+        "상가정보 202403→202606 비교 추정치",
+    ),
 ]
 for col, icon, label, value, source in evidence_stats:
     with col:
@@ -149,6 +173,29 @@ for col, icon, label, value, source in evidence_stats:
             unsafe_allow_html=True,
         )
 
+if closure_row is not None:
+    st.caption(
+        "※ 폐업 후보 비율은 2024년 1분기와 2026년 2분기 상가정보에서 사라진 점포 수 "
+        "기준 추정치입니다 — 실제 폐업 외 이전·업종변경·데이터 정정도 포함될 수 있습니다."
+    )
+elif selected_dong in {"명학동", "박달동", "병목안동", "호현동"}:
+    st.caption("※ 이 행정동은 비교 기간 중 행정동 개편(명칭 변경·통합)이 있어 폐업 흐름 비교에서 제외했습니다.")
+
+redevelopment_risk = load_redevelopment_risk().get(selected_dong)
+if redevelopment_risk:
+    project_names = "、".join(p["name"] for p in redevelopment_risk["projects"][:3])
+    st.markdown(
+        f"""
+        <div class="anyang-card" style="border-left:4px solid #E67E22; margin-bottom:0.8rem;">
+            <b>⚠️ 정비사업 인접 리스크</b> — {selected_dong} 반경 500m 내 진행 중인 정비사업
+            {redevelopment_risk['count']}건({project_names} 등, 총 {redevelopment_risk['total_households']:,}세대).
+            향후 이주로 인한 유동인구 변화 가능성이 있습니다.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption("출처: 경기도 안양시_일반 정비사업 추진현황(안양시 AI정책과 발행)")
+
 st.write("")
 c1, c2, c3 = st.columns(3)
 with c1:
@@ -158,12 +205,17 @@ with c2:
 with c3:
     st.markdown(_bullet_card("정책적 시사점 · 추천", "🎯", report.get("recommendations", []), numbered=True), unsafe_allow_html=True)
 
+_source_line = (
+    "카드소비 데이터(경기데이터드림, 2026년 1~3월) · 상가(상권)정보(소상공인시장진흥공단) · "
+    "주민등록인구 통계(안양시) · 버스정류소정보(국토교통부 TAGO) · 유동인구_안양시(경기데이터드림)"
+)
+if redevelopment_risk:
+    _source_line += " · 정비사업 추진현황(안양시 AI정책과)"
 st.markdown(
-    """
+    f"""
     <div style="margin-top:1.4rem; padding:0.9rem 1.1rem; background:#F5F8FC; border:1px solid #E3E9F1;
                 border-radius:12px; font-size:0.75rem; color:#6B7684;">
-        <b>데이터 출처</b> · 카드소비 데이터(경기데이터드림, 2026년 1~3월) · 상가(상권)정보(소상공인시장진흥공단) ·
-        주민등록인구 통계(안양시) · 버스정류소정보(국토교통부 TAGO) · 유동인구_안양시(경기데이터드림)
+        <b>데이터 출처</b> · {_source_line}
     </div>
     """,
     unsafe_allow_html=True,

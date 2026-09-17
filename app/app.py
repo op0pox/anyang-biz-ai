@@ -128,13 +128,43 @@ else:
             unsafe_allow_html=True,
         )
 
-st.write("")
-st.info("왼쪽 사이드바 메뉴 또는 아래 버튼으로 원하는 기능으로 이동하세요.")
+st.markdown('<div class="anyang-section-title">당신은 누구신가요?</div>', unsafe_allow_html=True)
+st.caption("데이터와 모델은 동일하지만, 필요한 화면과 정보는 다릅니다 — 맞는 쪽으로 바로 이동하세요.")
 
-b1, b2, b3 = st.columns(3)
-with b1:
-    st.page_link("pages/1_매출예측_업종추천.py", label="📈 매출예측·업종추천 시작하기", width="stretch")
-with b2:
-    st.page_link("pages/2_지원우선순위.py", label="🗺️ 지원 우선순위 보기", width="stretch")
-with b3:
-    st.page_link("pages/3_AI리포트.py", label="🤖 AI 정책 리포트 생성", width="stretch")
+p1, p2 = st.columns(2)
+with p1:
+    st.markdown(
+        """
+        <div class="anyang-card" style="text-align:center;">
+            <div class="icon" style="font-size:2rem;">🏪</div>
+            <h3>소상공인 사장님</h3>
+            <p>매출이 흔들릴 때, 우리 동네·업종의 예상 매출과 지금 받을 수 있는
+            지원제도를 바로 확인하고 싶으신가요?</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.page_link("pages/1_매출예측_업종추천.py", label="📈 매출예측·업종추천 보러가기", width="stretch")
+with p2:
+    st.markdown(
+        """
+        <div class="anyang-card" style="text-align:center;">
+            <div class="icon" style="font-size:2rem;">🏛️</div>
+            <h3>안양시 정책담당자</h3>
+            <p>관내 소상공인 중 위험군을 조기에 파악해 예산·상담 인력을
+            어디에 우선 배정할지 판단하고 싶으신가요?</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.page_link("pages/2_지원우선순위.py", label="🗺️ 지원 우선순위 보러가기", width="stretch")
+
+st.write("")
+with st.expander("또는 원하는 페이지로 바로 이동"):
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        st.page_link("pages/1_매출예측_업종추천.py", label="📈 매출예측·업종추천", width="stretch")
+    with b2:
+        st.page_link("pages/2_지원우선순위.py", label="🗺️ 지원 우선순위", width="stretch")
+    with b3:
+        st.page_link("pages/3_AI리포트.py", label="🤖 AI 정책 리포트", width="stretch")

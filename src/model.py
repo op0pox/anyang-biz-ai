@@ -18,6 +18,7 @@ from src.config import (
     PRIORITY_WEIGHT_EFFICIENCY,
     PRIORITY_WEIGHT_SALES,
     RANDOM_STATE,
+    SAFETY_NET_PROGRAMS,
     SIMULATION_FEATURES,
     SIMULATION_GRID_RESOLUTION,
     SIMULATION_MODEL_PARAMS,
@@ -290,4 +291,22 @@ def recommend_support_type(priority_row: dict) -> dict:
     result = dict(_SUPPORT_TYPE_CATALOG[dominant])
     result["dominant_factor"] = dominant
     result["contributions"] = contributions
+    return result
+
+
+def match_safety_net(priority_score: float) -> dict:
+    """지원우선순위 스코어의 절대 수준(0~100)을 3단계로 나눠 실제 지원제도를 매칭한다.
+
+    recommend_support_type()의 "지배 요인"(왜 필요한지) 축과는 별개다 — 이쪽은
+    "얼마나 급한지"에 따라 안양시·국가의 실제 제도명을 매칭하는 안전망 축이다.
+    """
+    if priority_score >= 66:
+        tier = "재기지원"
+    elif priority_score >= 33:
+        tier = "긴급수혈"
+    else:
+        tier = "예방"
+
+    result = dict(SAFETY_NET_PROGRAMS[tier])
+    result["tier"] = tier
     return result

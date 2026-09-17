@@ -10,13 +10,25 @@ APP_DIR = Path(__file__).resolve().parent.parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
-from common import SERVICE_NAME, inject_css, load_pipeline, render_topbar, show_pipeline_error  # noqa: E402
+from common import (  # noqa: E402
+    SERVICE_NAME,
+    inject_css,
+    load_pipeline,
+    load_redevelopment_risk,
+    render_topbar,
+    show_pipeline_error,
+)
 from src.config import (  # noqa: E402
     PRIORITY_WEIGHT_COMPETITION,
     PRIORITY_WEIGHT_EFFICIENCY,
     PRIORITY_WEIGHT_SALES,
 )
-from src.model import compute_support_priority, recommend_support_type, simulate_dong_scenario  # noqa: E402
+from src.model import (  # noqa: E402
+    compute_support_priority,
+    match_safety_net,
+    recommend_support_type,
+    simulate_dong_scenario,
+)
 
 st.set_page_config(page_title=f"지원우선순위 | {SERVICE_NAME}", page_icon="🗺️", layout="wide")
 inject_css()
@@ -146,6 +158,46 @@ st.caption(
     "이 변수만 실측값이 촘촘해 전체 데이터 평균 효과를 안정적으로 추정할 수 있었습니다. "
     "그 외 지원 유형(마케팅, 임대료 지원 등)은 데이터 근거가 부족해 정성적 권고로만 제공합니다."
 )
+
+safety_net = match_safety_net(detail_row["priority_score"])
+tier_color = {"예방": "#17A673", "긴급수혈": "#E67E22", "재기지원": "#c0392b"}[safety_net["tier"]]
+program_rows = "".join(
+    f"""<li style="margin-bottom:0.4rem;"><b>{p['name']}</b> — {p['description']}</li>"""
+    for p in safety_net["programs"]
+)
+st.markdown(
+    f"""
+    <div class="anyang-card" style="margin-top:1rem; border-left:4px solid {tier_color};">
+        <div class="anyang-badge" style="background:{tier_color}22; color:{tier_color};">
+            안전망 단계: {safety_net['tier']} (스코어 {safety_net['range']})
+        </div>
+        <h3 style="margin-top:0.7rem;">{detail_dong}에 매칭되는 지원제도</h3>
+        <ul style="margin:0.4rem 0 0; padding-left:1.2rem; font-size:0.9rem; color:#1B2430;">
+            {program_rows}
+        </ul>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+st.caption(
+    "※ 안전망 매칭은 지원우선순위 스코어의 절대 수준(얼마나 급한지)에 따른 것으로, "
+    "위 지배 요인 진단(왜 필요한지)과는 별개의 기준입니다."
+)
+
+redevelopment_risk = load_redevelopment_risk().get(detail_dong)
+if redevelopment_risk:
+    project_names = "、".join(p["name"] for p in redevelopment_risk["projects"][:3])
+    st.markdown(
+        f"""
+        <div class="anyang-card" style="border-left:4px solid #E67E22; margin-top:0.8rem;">
+            <b>⚠️ 정비사업 인접 리스크</b> — {detail_dong} 반경 500m 내 진행 중인 정비사업
+            {redevelopment_risk['count']}건({project_names} 등, 총 {redevelopment_risk['total_households']:,}세대).
+            향후 이주로 인한 유동인구 변화 가능성이 있어 예산 배정 시 참고할 만합니다.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption("출처: 경기도 안양시_일반 정비사업 추진현황(안양시 AI정책과 발행)")
 
 st.markdown('<div class="anyang-section-title">우선순위 스코어 비교</div>', unsafe_allow_html=True)
 chart_df = display_df[["dong", "priority_score"]].set_index("dong")

@@ -10,7 +10,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data_loader import DataFileNotFoundError  # noqa: E402
-from src.feature_engineering import build_feature_table  # noqa: E402
+from src.feature_engineering import (  # noqa: E402
+    build_feature_table,
+    compute_closure_rate_table,
+    get_redevelopment_risk_by_dong,
+)
 from src.model import TrainedModel, train_model  # noqa: E402
 
 SERVICE_NAME = "안양 상권 나침반"
@@ -59,6 +63,27 @@ def load_pipeline():
         return None, None, str(exc)
     except Exception as exc:  # noqa: BLE001
         return None, None, f"데이터 처리 중 오류가 발생했습니다: {exc}"
+
+
+@st.cache_data(show_spinner=False)
+def load_redevelopment_risk() -> dict:
+    """행정동별 정비사업 인접 리스크 조회 (캐시됨). 데이터가 없거나 오류가 나도
+    조용히 빈 dict를 반환한다 — 이 정보는 부가 참고용이라 없어도 서비스는 정상 동작해야 한다."""
+    try:
+        return get_redevelopment_risk_by_dong()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+@st.cache_data(show_spinner="분기별 상가 데이터를 비교하는 중입니다...")
+def load_closure_rate_table():
+    """행정동×업종별 폐업 흐름 통계 조회 (캐시됨, 300MB+ 파일 2개 비교라 최초 1회만
+    계산). 실패하면 None을 반환해 UI에서 이 스탯만 조용히 생략할 수 있게 한다."""
+    try:
+        table = compute_closure_rate_table()
+        return table if not table.empty else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def show_pipeline_error(message: str):

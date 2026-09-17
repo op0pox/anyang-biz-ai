@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_RAW_DIR = PROJECT_ROOT / "data" / "raw"
 DATA_PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
+DATA_SOURCES_DIR = PROJECT_ROOT / "data" / "sources"
 
 DATA_RAW_DIR.mkdir(parents=True, exist_ok=True)
 DATA_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -194,6 +195,45 @@ TARGET_COLUMN = "sales_amount"
 PRIORITY_WEIGHT_SALES = 0.45
 PRIORITY_WEIGHT_COMPETITION = 0.30
 PRIORITY_WEIGHT_EFFICIENCY = 0.25
+
+# ---------------------------------------------------------------------------
+# 3단계 안전망 매칭 — 지원우선순위 스코어(0~100)의 절대 수준을 3구간으로 나눠
+# 실제 지원제도와 매칭한다. recommend_support_type()의 "지배 요인"(왜 필요한지)과는
+# 다른 축이다 — 이쪽은 "얼마나 급한지"에 따라 실제 제도명을 매칭한다.
+# 구간 컷(33/66)은 기존 코드 곳곳(ai_report.py, UI)에서 이미 쓰던 낮음/중간/높음
+# 3단계 분류와 동일하게 맞췄다.
+# ---------------------------------------------------------------------------
+SAFETY_NET_PROGRAMS = {
+    "예방": {
+        "range": "0~33점",
+        "programs": [
+            {"name": "안양시 소상공인 특례보증", "description": "저금리 보증부 대출로 자금 여력 확보"},
+            {"name": "안양상권활성화센터 컨설팅", "description": "경영·마케팅 무료 컨설팅으로 사전 리스크 관리"},
+        ],
+    },
+    "긴급수혈": {
+        "range": "33~66점",
+        "programs": [
+            {"name": "중소기업 육성자금", "description": "운영자금 융자로 매출 하락기 버티기 지원"},
+            {"name": "안양사랑페이 가맹 프로모션 연계", "description": "지역화폐 프로모션으로 단기 매출 견인"},
+        ],
+    },
+    "재기지원": {
+        "range": "66~100점",
+        "programs": [
+            {"name": "희망리턴패키지", "description": "점포철거비·재창업 컨설팅 등 폐업·재기 국비 지원사업"},
+        ],
+    },
+}
+
+# 정비사업 인접 리스크 반경(미터) — 버스정류장(300m)보다는 넓게 잡되(재건축·리모델링은
+# 개별 점포 접근성보다 넓은 범위의 유동인구 구조에 영향을 미치므로), 너무 넓으면
+# (예: 800m는 31개 행정동 중 18개, 1000m는 23개가 걸려 "다 위험하다"는 식으로 신호가
+# 희석된다) 실측으로 확인 후 500m로 정함 — 11/31개 행정동만 해당돼 선별적인 신호가 된다.
+REDEVELOPMENT_RADIUS_M = 500
+# 이미 완료되어 더 이상 이주 리스크가 없는 사업 단계/현황 (정비사업 데이터 실제 값 기준)
+REDEVELOPMENT_COMPLETED_STAGES = {"준공"}
+REDEVELOPMENT_COMPLETED_STATUSES = {"이전고시"}
 
 # ---------------------------------------------------------------------------
 # LLM 리포트
