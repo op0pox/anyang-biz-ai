@@ -40,14 +40,17 @@ if error:
 dongs = sorted(feature_table["dong"].unique())
 categories = sorted(feature_table["category"].unique())
 
-with st.sidebar:
-    st.subheader("리포트 대상 선택")
-    selected_dong = st.selectbox("행정동", dongs, key="report_dong")
-    selected_category = st.selectbox("업종", categories, key="report_category")
+with st.container(border=True):
+    st.markdown("**🔍 리포트 대상 선택**")
+    report_col1, report_col2 = st.columns(2)
+    with report_col1:
+        selected_dong = st.selectbox("행정동", dongs, key="report_dong")
+    with report_col2:
+        selected_category = st.selectbox("업종", categories, key="report_category")
     generate_clicked = st.button("📝 AI 정책분석 리포트 생성", width="stretch")
 
 if not generate_clicked:
-    st.info("왼쪽에서 행정동과 업종을 선택한 뒤 'AI 정책분석 리포트 생성' 버튼을 눌러주세요.")
+    st.info("위에서 행정동과 업종을 선택한 뒤 'AI 정책분석 리포트 생성' 버튼을 눌러주세요.")
     st.stop()
 
 

@@ -29,14 +29,17 @@ if error:
 dongs = sorted(feature_table["dong"].unique())
 categories = sorted(feature_table["category"].unique())
 
-with st.sidebar:
-    st.subheader("조회 조건")
-    selected_dong = st.selectbox("행정동", dongs, key="dong_select")
-    selected_category = st.selectbox("업종(선택 시 상세 예측 확인)", categories, key="category_select")
-
 if not dongs or not categories:
     st.warning("조회할 수 있는 행정동/업종 데이터가 없습니다.")
     st.stop()
+
+with st.container(border=True):
+    st.markdown("**🔍 조회 조건**")
+    search_col1, search_col2 = st.columns(2)
+    with search_col1:
+        selected_dong = st.selectbox("행정동", dongs, key="dong_select")
+    with search_col2:
+        selected_category = st.selectbox("업종(선택 시 상세 예측 확인)", categories, key="category_select")
 
 result = predict_sales(trained, selected_dong, selected_category)
 

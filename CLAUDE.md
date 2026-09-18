@@ -159,6 +159,20 @@ scripts/make_sample_data.py  가상 데이터 생성 (파이프라인 1차 검�
   모델(`model`, min_samples_leaf=2) 대신 시뮬레이터용 보수적 모델(`simulation_model`,
   min_samples_leaf=10)의 25~75백분위를 쓴다 — 이쪽은 시뮬레이터가 이미 겪은 것과 같은
   트리 잡음 문제라 같은 해법(보수적 모델)을 재사용했다.
+- **Streamlit 기본 UI(Deploy/메뉴/실행상태) 숨김은 `[data-testid="stHeader"]`를 통째로
+  `display: none` 하면 안 된다**(`app/style.css`): 사이드바를 접었을 때 "다시 펼치기"
+  화살표(`stExpandSidebarButton`)는 접힌 사이드바 안이 아니라 이 header 툴바 안에서
+  렌더링된다 — header를 완전히 숨기면 사이드바를 한 번 접은 뒤 다시 펼칠 방법이 사라지는
+  실사용 버그가 났다(사용자가 직접 겪고 리포트함). 올바른 방법: header는 유지하되
+  `background: transparent` + `height/min-height: auto/0`으로 바꾸고, 그 안의
+  `stAppDeployButton`/`stMainMenu`/`stStatusWidget`(Deploy·메뉴·Stop) 개별 요소만
+  `display: none` 한다 — 평소엔 빈 줄로 안 보이다가 펼치기 버튼이 필요할 때만 나타난다.
+- **조회 조건(행정동/업종 선택) 위젯은 사이드바가 아니라 결과 바로 위 메인 화면에
+  둔다**: 매출예측·업종추천/AI리포트 페이지가 처음엔 `st.sidebar`에 이 위젯들을 뒀는데,
+  "사이드바에서 조건을 검색할 수 있다는 느낌이 안 든다"는 실제 피드백을 받고 메인
+  화면 상단 "🔍 조회 조건" 카드(`st.container(border=True)`)로 옮겼다. 지원우선순위
+  페이지는 처음부터 메인 화면에 `st.selectbox`를 썼던 것과도 일관됨. 새 조회/필터
+  위젯을 추가할 때 이 패턴을 따를 것 — 사이드바는 페이지 이동 내비게이션 전용으로 둔다.
 
 ## 데이터 소스별 주의사항 (실데이터 연동 중 실제로 겪은 문제들)
 
