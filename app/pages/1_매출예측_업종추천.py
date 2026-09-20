@@ -18,7 +18,6 @@ from src.model import (  # noqa: E402
     predict_sales,
     rank_categories_for_dong,
     recommend_support_type,
-    simulate_scenario,
 )
 
 st.set_page_config(page_title=f"매출예측·업종추천 | {SERVICE_NAME}", page_icon="📈", layout="wide")
@@ -155,96 +154,6 @@ if result is not None:
             f"※ {selected_dong} 행정동 전체 기준 지원우선순위 스코어({priority_row['priority_score']:.1f}점)를 "
             "바탕으로 매칭했습니다 — 특정 업종이 아니라 행정동 단위 지표입니다."
         )
-
-if result is not None:
-    st.markdown('<div class="anyang-section-title">🧪 정책 시뮬레이션 — 조건이 바뀌면 매출이 어떻게 될까요?</div>', unsafe_allow_html=True)
-    st.caption(
-        "실제로 개입 가능한 정책 변수를 조정해 예상 매출 변화를 미리 시험해볼 수 있습니다. "
-        "특정 행정동 하나의 우연한 값에 휘둘리지 않도록, 전체 데이터에서 해당 조건 변화가 "
-        "평균적으로 미치는 영향을 이 지역의 기준 예측치에 반영한 추정치입니다."
-    )
-
-    current_bus = int(result["features"]["bus_stop_count"])
-    current_floating = result["features"]["floating_population"]
-
-    # 슬라이더는 실측 데이터 범위를 벗어나지 않게 캡을 씌운다 — 관측 범위 밖으로
-    # 나가면 부분의존도 곡선이 평평하게(변화 없음으로) 잘려서, "슬라이더를 움직였는데
-    # 왜 아무 변화가 없지?"라는 오해를 부를 수 있기 때문이다.
-    observed_bus_max = int(feature_table["bus_stop_count"].max())
-    observed_fp_min = feature_table["floating_population"].min()
-    observed_fp_max = feature_table["floating_population"].max()
-    fp_pct_floor = min(0, int((observed_fp_min / current_floating - 1) * 100)) if current_floating > 0 else 0
-    fp_pct_ceiling = max(0, int((observed_fp_max / current_floating - 1) * 100)) if current_floating > 0 else 0
-
-    sim_col1, sim_col2 = st.columns(2)
-    with sim_col1:
-        bus_stop_slider = st.slider(
-            "🚌 버스정류장 개수(반경 300m)",
-            min_value=0,
-            max_value=max(observed_bus_max, current_bus),
-            value=current_bus,
-            key="sim_bus_stop",
-        )
-        if current_bus >= observed_bus_max:
-            st.caption(f"※ 이미 안양시 관측 최댓값({observed_bus_max}개) 수준이라 늘리는 방향은 시험해볼 수 없습니다.")
-    with sim_col2:
-        if fp_pct_ceiling > fp_pct_floor:
-            floating_pct_slider = st.slider(
-                "🚶 유동인구 증감률",
-                min_value=fp_pct_floor,
-                max_value=fp_pct_ceiling,
-                value=0,
-                format="%d%%",
-                key="sim_floating_pct",
-            )
-        else:
-            floating_pct_slider = 0
-            st.write("🚶 유동인구 증감률")
-            st.caption("※ 이 지역은 이미 관측된 유동인구 범위의 최댓값·최솟값이라 시험해볼 여지가 없습니다.")
-
-    scenario = simulate_scenario(
-        trained,
-        selected_dong,
-        selected_category,
-        {
-            "bus_stop_count": bus_stop_slider,
-            "floating_population": current_floating * (1 + floating_pct_slider / 100),
-        },
-    )
-
-    if scenario:
-        diff = scenario["predicted_sales"] - scenario["baseline_sales"]
-        pct = (diff / scenario["baseline_sales"] * 100) if scenario["baseline_sales"] else 0
-        arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "―")
-        color = "#17A673" if diff > 0 else ("#c0392b" if diff < 0 else "#6B7684")
-
-        sr1, sr2, sr3 = st.columns(3)
-        with sr1:
-            st.markdown(
-                f"""<div class="anyang-card" style="text-align:center;">
-                <div style="font-size:0.8rem; color:#6B7684;">현재 조건 예상 매출</div>
-                <div style="font-size:1.3rem; font-weight:800; color:#1B2430;">{scenario['baseline_sales']:,.0f}원</div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
-        with sr2:
-            st.markdown(
-                f"""<div class="anyang-card" style="text-align:center; background:linear-gradient(135deg,#0B5ED7,#17A673); color:white;">
-                <div style="font-size:0.8rem; opacity:0.9;">시나리오 적용 시 예상 매출</div>
-                <div style="font-size:1.3rem; font-weight:800;">{scenario['predicted_sales']:,.0f}원</div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
-        with sr3:
-            st.markdown(
-                f"""<div class="anyang-card" style="text-align:center;">
-                <div style="font-size:0.8rem; color:#6B7684;">변화</div>
-                <div style="font-size:1.3rem; font-weight:800; color:{color};">{arrow} {abs(pct):.1f}%</div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
-    else:
-        st.info("시나리오를 계산할 수 없습니다.")
 
 st.markdown('<div class="anyang-section-title">🏆 이 동네엔 어떤 업종이 유리할까요?</div>', unsafe_allow_html=True)
 st.caption("기존 상권분석 서비스에는 없는 기능입니다 — 업종을 직접 고르지 않아도, 지역 기반으로 유리한 업종을 추천합니다.")

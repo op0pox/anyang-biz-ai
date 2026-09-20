@@ -29,8 +29,6 @@ from src.model import (  # noqa: E402
     match_safety_net,
     rank_categories_for_dong,
     recommend_support_type,
-    simulate_dong_scenario,
-    simulate_priority_shift,
 )
 
 st.set_page_config(page_title=f"지원우선순위 | {SERVICE_NAME}", page_icon="🗺️", layout="wide")
@@ -112,73 +110,19 @@ detail_dong = st.selectbox("행정동 선택", display_df["dong"].tolist(), key=
 detail_row = priority_df[priority_df["dong"] == detail_dong].iloc[0].to_dict()
 recommendation = recommend_support_type(detail_row)
 
-dc1, dc2 = st.columns(2)
-with dc1:
-    st.markdown(
-        f"""
-        <div class="anyang-card" style="height:100%;">
-            <div class="anyang-badge">진단: {FACTOR_LABELS[recommendation['dominant_factor']]} 요인이 가장 큼</div>
-            <h3 style="margin-top:0.7rem;">{recommendation['title']}</h3>
-            <p style="font-size:0.9rem; color:#1B2430; line-height:1.5;">{recommendation['description']}</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-with dc2:
-    current_bus = feature_table.loc[feature_table["dong"] == detail_dong, "bus_stop_count"].iloc[0]
-    # 실측 최댓값을 넘어서는 "확충"은 부분의존도 곡선이 평평하게 잘려 신뢰할 수
-    # 없으므로, 남은 여유분만큼만 슬라이더로 시험해볼 수 있게 한다.
-    observed_bus_max = int(feature_table["bus_stop_count"].max())
-    room = max(0, observed_bus_max - int(current_bus))
-    if room > 0:
-        add_bus = st.slider(
-            "🚌 버스정류장을 몇 개 확충하면?", min_value=0, max_value=room, value=min(3, room), key="support_bus_slider"
-        )
-    else:
-        add_bus = 0
-        st.write("🚌 버스정류장을 몇 개 확충하면?")
-        st.caption(f"※ {detail_dong}은 이미 안양시 관측 최댓값({observed_bus_max}개) 수준이라 늘리는 시나리오를 시험해볼 수 없습니다.")
-    overrides = {"bus_stop_count": current_bus + add_bus}
-    shift = simulate_priority_shift(trained, detail_dong, overrides)
-    scenario = simulate_dong_scenario(trained, detail_dong, overrides)
-
-    if shift:
-        tier_color_map = {"예방": "#17A673", "긴급수혈": "#E67E22", "재기지원": "#c0392b"}
-        before_color = tier_color_map[shift["baseline_tier"]]
-        after_color = tier_color_map[shift["new_tier"]]
-        score_diff = shift["new_priority_score"] - shift["baseline_priority_score"]
-        pct_line = ""
-        if scenario and scenario["baseline_sales"] > 0:
-            diff_pct = 100 * (scenario["predicted_sales"] - scenario["baseline_sales"]) / scenario["baseline_sales"]
-            pct_line = f"매출 {diff_pct:+.1f}% 변화 추정 · "
-        st.markdown(
-            f"""
-            <div class="anyang-card" style="height:100%; text-align:center;">
-                <div style="font-size:0.8rem; color:#6B7684; margin-bottom:0.5rem;">
-                    버스정류장 {add_bus}개 확충 시 {detail_dong} 안전망 단계
-                </div>
-                <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem;">
-                    <span class="anyang-badge" style="background:{before_color}22; color:{before_color};">{shift['baseline_tier']}</span>
-                    <span style="color:#9AA5B1;">→</span>
-                    <span class="anyang-badge" style="background:{after_color}22; color:{after_color};">{shift['new_tier']}</span>
-                </div>
-                <div style="font-size:0.72rem; color:#9AA5B1; margin-top:0.6rem;">
-                    {pct_line}우선순위 스코어 {shift['baseline_priority_score']:.1f}점 → {shift['new_priority_score']:.1f}점({score_diff:+.1f})
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        st.info("이 행정동은 시나리오를 계산할 데이터가 부족합니다.")
-
+st.markdown(
+    f"""
+    <div class="anyang-card">
+        <div class="anyang-badge">진단: {FACTOR_LABELS[recommendation['dominant_factor']]} 요인이 가장 큼</div>
+        <h3 style="margin-top:0.7rem;">{recommendation['title']}</h3>
+        <p style="font-size:0.9rem; color:#1B2430; line-height:1.5;">{recommendation['description']}</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 st.caption(
-    "※ 현재 정량적으로 시뮬레이션 가능한 정책 변수는 버스정류장(대중교통 접근성)뿐입니다 — "
-    "이 변수만 실측값이 촘촘해 전체 데이터 평균 효과를 안정적으로 추정할 수 있었습니다. "
-    "안전망 단계 변화는 이 매출 시뮬레이션 결과를 다른 30개 행정동과 함께 우선순위 공식에 "
-    "그대로 재적용한 것으로, 폐업률 자체를 직접 예측한 것은 아닙니다(지원-폐업률 간 실측 "
-    "인과관계를 보여줄 데이터가 없어 그 수치는 만들어내지 않습니다). "
-    "그 외 지원 유형(마케팅, 임대료 지원 등)은 데이터 근거가 부족해 정성적 권고로만 제공합니다."
+    "※ 이 지원 유형은 정성적 진단입니다(마케팅·임대료 지원 등 데이터 근거가 부족한 정책은 "
+    "정량 시뮬레이션 대신 이 진단으로만 제공합니다)."
 )
 
 safety_net = match_safety_net(detail_row["priority_score"])

@@ -87,6 +87,23 @@ def load_closure_rate_table():
         return None
 
 
+@st.cache_data(show_spinner="지원사업 공고를 불러오는 중입니다...")
+def load_support_program_announcements():
+    """지원사업 공고 목록 조회 (캐시됨). 실패하면 구조 검증용 가상 데이터로
+    조용히 대체한다 — 로더 자체가 이미 그렇게 폴백하지만, 페이지가 예외로
+    죽는 걸 한 번 더 막는다."""
+    from src.data_loader import load_support_program_announcements as _load
+
+    try:
+        return _load()
+    except Exception:  # noqa: BLE001
+        import pandas as pd
+
+        return pd.DataFrame(
+            columns=["name", "agency", "category", "target", "apply_start", "apply_end", "detail_url", "source"]
+        )
+
+
 @st.cache_data(show_spinner=False)
 def load_other_region_support_center_examples() -> list:
     """안양시엔 없는 업종별 소공인 특화지원센터의 타 지역 운영 사례 조회 (캐시됨).

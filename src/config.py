@@ -141,6 +141,25 @@ BUS_API_PAGE_SIZE = 100
 CITY_NAME = "안양시"  # getCtyCodeList 응답의 cityname과 매칭할 도시명
 
 # ---------------------------------------------------------------------------
+# 기업마당(bizinfo.go.kr) 지원사업정보 API + K-Startup 통합공고 API
+# 둘 다 실제 키로 호출해 엔드포인트/파라미터/응답 스키마를 확인 완료(2026-09-21).
+# ---------------------------------------------------------------------------
+BIZINFO_API_BASE_URL = "https://www.bizinfo.go.kr/uss/rss/bizinfoApi.do"
+BIZINFO_SEARCH_COUNT = 100
+# hashtags 파라미터는 서버 측 키워드 검색 — "안양"만 넣어도 "안양시"가 포함된
+# 공고가 그대로 걸린다(실제 호출로 확인됨). 전국 3만여 건을 다 받을 필요 없이
+# 안양시 관련 공고만 바로 받을 수 있어 별도 클라이언트 필터링이 필요 없다.
+BIZINFO_REGION_HASHTAG = "안양"
+
+KSTARTUP_API_BASE_URL = "https://apis.data.go.kr/B552735/kisedKstartupService01"
+KSTARTUP_ANNOUNCEMENT_OPERATION = "getAnnouncementInformation01"
+KSTARTUP_PAGE_SIZE = 100
+# K-Startup은 기업마당과 달리 지역 검색 파라미터를 찾지 못해(2026-09-21 기준) 최근
+# 공고 몇 페이지를 받아 클라이언트에서 "안양 관련" 또는 "전국 대상"만 걸러낸다.
+# 전체 3만여 건이라 페이지 수를 제한한다(경기데이터드림 유동인구와 같은 이유).
+KSTARTUP_MAX_PAGES = 3
+
+# ---------------------------------------------------------------------------
 # 모델 하이퍼파라미터
 # ---------------------------------------------------------------------------
 MODEL_PARAMS = {
@@ -153,13 +172,13 @@ MODEL_PARAMS = {
 TEST_SIZE = 0.2
 RANDOM_STATE = 42
 
-# 시뮬레이터(정책 시나리오 what-if) 전용 모델 하이퍼파라미터.
-# 표본이 279개(31개 행정동x9개 업종)로 작아 min_samples_leaf=2인 기본 모델은
-# 학습에 없던 피처 조합(버스정류장을 몇 개 늘린다 등)에 대해 예측이 급격히
-# 튀는 현상이 있었다(실측: 정류장 5개 추가만으로 예측 매출이 98% 급락).
-# min_samples_leaf를 높여 리프가 더 많은 표본을 평균 내도록 해서, 정확도는
-# 살짝 낮아지더라도 "조건을 조금 바꿨는데 결과가 폭락한다" 같은 비상식적
-# 시뮬레이션 결과를 방지한다. 기본 예측/랭킹에는 영향 없음(별도 모델).
+# 예상 범위(predicted_low/predicted_high, model.py의 _predicted_range) 산출 전용
+# 모델 하이퍼파라미터. 표본이 279개(31개 행정동x9개 업종)로 작아 min_samples_leaf=2인
+# 기본 모델은 트리별 예측 분산이 표본 크기와 상관없이 요동쳐(실측: 최대 50배 차이)
+# 그대로 신뢰구간처럼 보여주면 오해를 부른다. min_samples_leaf를 높여 리프가 더 많은
+# 표본을 평균 내도록 해서 더 안정적인 예상 범위를 만든다. 기본 예측/랭킹에는
+# 영향 없음(별도 모델). 2026-09-21 이전엔 정책 시뮬레이션(what-if)에도 같이 썼으나
+# 그 기능은 제거됨 — 지금은 예상 범위 산출이 유일한 용도.
 SIMULATION_MODEL_PARAMS = {
     "n_estimators": 300,
     "max_depth": None,
@@ -167,14 +186,6 @@ SIMULATION_MODEL_PARAMS = {
     "random_state": 42,
     "n_jobs": -1,
 }
-
-# 시뮬레이터에 노출할 피처만 별도로 관리한다. competitor_count는 이 데이터에서
-# "경쟁점포가 많을수록 매출도 높게" 나오는데(경쟁 압력이 아니라 상권 자체가
-# 활발해서 생기는 상관관계로 보임), 슬라이더로 "경쟁점포를 줄이면?"을 물으면
-# 정반대의 오해를 부를 수 있어 제외한다. resident_population은 현재 실데이터가
-# 구 단위 2개 값만 가지고 있어 floating_population과 사실상 중복이라 제외한다.
-SIMULATION_FEATURES = ["bus_stop_count", "floating_population"]
-SIMULATION_GRID_RESOLUTION = 20
 
 FEATURE_COLUMNS = [
     "competitor_count",

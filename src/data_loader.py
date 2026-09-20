@@ -20,6 +20,9 @@ from src.config import (
     ANYANG_BBOX_RADIUS_KM,
     ANYANG_CENTER_LAT,
     ANYANG_CENTER_LON,
+    BIZINFO_API_BASE_URL,
+    BIZINFO_REGION_HASHTAG,
+    BIZINFO_SEARCH_COUNT,
     BUS_API_BASE_URL,
     BUS_API_PAGE_SIZE,
     CITY_FILTER_KEYWORD,
@@ -30,9 +33,18 @@ from src.config import (
     GG_OPEN_API_MAX_PAGES,
     GG_OPEN_API_PAGE_SIZE,
     GG_OPEN_API_SERVICE_NAME,
+    KSTARTUP_ANNOUNCEMENT_OPERATION,
+    KSTARTUP_API_BASE_URL,
+    KSTARTUP_MAX_PAGES,
+    KSTARTUP_PAGE_SIZE,
     RAW_FILE_STEMS,
     STORE_TO_CARD_CATEGORY_MAP,
 )
+
+_SUPPORT_PROGRAM_COLUMNS = [
+    "name", "agency", "category", "target", "exclude",
+    "apply_start", "apply_end", "detail_url", "source", "years_tag",
+]
 
 
 def _haversine_km(lat1, lon1, lat2, lon2) -> float:
@@ -919,3 +931,187 @@ def load_specialized_support_centers() -> pd.DataFrame:
             "keyword": keyword,
         }
     )
+
+
+def _make_fallback_support_programs() -> pd.DataFrame:
+    """기업마당/K-Startup API 키가 없거나 호출에 실패했을 때 쓰는 구조 검증용 가상
+    공고 데이터. bus_stops의 _make_fallback_bus_stops()와 같은 이유로 이름을
+    "가상~"으로 명시해, 실제 제도로 오인되지 않게 한다."""
+    today = pd.Timestamp.today().normalize()
+    return pd.DataFrame(
+        [
+            {
+                "name": "가상지원사업1(구조검증용)",
+                "agency": "가상기관",
+                "category": "전체",
+                "target": "업력 3년 이하 소상공인",
+                "exclude": "",
+                "apply_start": today - pd.Timedelta(days=10),
+                "apply_end": today + pd.Timedelta(days=20),
+                "detail_url": "",
+                "source": "fallback",
+                "years_tag": "3년미만",
+            },
+            {
+                "name": "가상지원사업2(구조검증용)",
+                "agency": "가상기관",
+                "category": "음식",
+                "target": "음식업 소상공인 중 매출 감소 사업체",
+                "exclude": "",
+                "apply_start": today - pd.Timedelta(days=5),
+                "apply_end": today + pd.Timedelta(days=40),
+                "detail_url": "",
+                "source": "fallback",
+                "years_tag": "",
+            },
+        ]
+    )
+
+
+def _parse_bizinfo_apply_period(text):
+    """기업마당 reqstBeginEndDe는 보통 "YYYY-MM-DD ~ YYYY-MM-DD"지만 "예산 소진시까지"
+    같은 자유 텍스트도 실제로 관측됐다(2026-09-21 확인). 파싱 실패 시 (None, None)을
+    반환해 "마감일 불명 — 상시 접수 가능성"으로 취급한다(모르는 걸 마감된 것으로
+    잘못 판단해 놓치는 것보다 안전하다는 판단, src/support_matching.py와 같은 원칙)."""
+    import re
+
+    if not isinstance(text, str):
+        return None, None
+    match = re.search(r"(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})", text)
+    if not match:
+        return None, None
+    start_str, end_str = match.groups()
+    return pd.to_datetime(start_str, errors="coerce"), pd.to_datetime(end_str, errors="coerce")
+
+
+def _fetch_bizinfo_announcements() -> Optional[pd.DataFrame]:
+    """기업마당 지원사업정보 API. hashtags 파라미터로 서버 측에서 바로 안양시 관련
+    공고만 받아온다(BIZINFO_REGION_HASHTAG, config.py 주석 참고 — 실제 호출로
+    파라미터/스키마 확인 완료, 2026-09-21)."""
+    api_key = os.environ.get("BIZINFO_API_KEY")
+    if not api_key:
+        return None
+    try:
+        resp = requests.get(
+            BIZINFO_API_BASE_URL,
+            params={
+                "crtfcKey": api_key,
+                "dataType": "json",
+                "searchCnt": BIZINFO_SEARCH_COUNT,
+                "hashtags": BIZINFO_REGION_HASHTAG,
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        rows = resp.json().get("jsonArray") or []
+        if not rows:
+            return pd.DataFrame(columns=_SUPPORT_PROGRAM_COLUMNS)
+
+        df = pd.DataFrame(rows)
+        periods = df.get("reqstBeginEndDe", pd.Series([None] * len(df))).map(_parse_bizinfo_apply_period)
+        starts, ends = zip(*periods) if len(periods) else ([], [])
+        agency = df.get("excInsttNm")
+        jurisdiction = df.get("jrsdInsttNm")
+        return pd.DataFrame(
+            {
+                "name": df.get("pblancNm", ""),
+                "agency": agency.fillna(jurisdiction) if agency is not None else jurisdiction,
+                "category": df.get("pldirSportRealmLclasCodeNm", ""),
+                "target": df.get("trgetNm", ""),
+                "exclude": "",  # 기업마당 응답엔 제외대상 전용 필드가 없음(공고문 원문 확인 필요)
+                "apply_start": list(starts),
+                "apply_end": list(ends),
+                "detail_url": df.get("pblancUrl", ""),
+                "source": "기업마당",
+                "years_tag": "",  # 기업마당 응답엔 업력 구간 전용 필드가 없음
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[안내] 기업마당 API 호출에 실패했습니다({exc}). 이 소스는 건너뜁니다.")
+        return None
+
+
+def _fetch_kstartup_announcements() -> Optional[pd.DataFrame]:
+    """K-Startup 통합공고 API(getAnnouncementInformation01). 지역 검색 파라미터를
+    찾지 못해 최근 공고 여러 페이지를 받아 클라이언트에서 "모집 중" + "안양 관련
+    또는 전국 대상"만 남긴다(실제 호출로 필드명 확인 완료, 2026-09-21)."""
+    import xml.etree.ElementTree as ET
+
+    api_key = os.environ.get("KSTARTUP_API_KEY")
+    if not api_key:
+        return None
+
+    all_rows = []
+    try:
+        for page in range(1, KSTARTUP_MAX_PAGES + 1):
+            resp = requests.get(
+                f"{KSTARTUP_API_BASE_URL}/{KSTARTUP_ANNOUNCEMENT_OPERATION}",
+                params={"serviceKey": api_key, "numOfRows": KSTARTUP_PAGE_SIZE, "pageNo": page},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            root = ET.fromstring(resp.content)
+            items = root.findall(".//item")
+            if not items:
+                break
+            for item in items:
+                all_rows.append({col.get("name"): (col.text or "") for col in item})
+
+        if not all_rows:
+            return pd.DataFrame(columns=_SUPPORT_PROGRAM_COLUMNS)
+
+        df = pd.DataFrame(all_rows)
+        is_active = df.get("rcrt_prgs_yn", pd.Series([""] * len(df))) == "Y"
+        address = df.get("aply_mthd_vst_rcpt_istc", pd.Series([""] * len(df))).fillna("")
+        agency = df.get("pbanc_ntrp_nm", pd.Series([""] * len(df))).fillna("")
+        region = df.get("supt_regin", pd.Series([""] * len(df))).fillna("")
+        is_relevant = (
+            address.str.contains("안양", na=False)
+            | agency.str.contains("안양", na=False)
+            | region.str.contains("전국", na=False)
+        )
+        df = df[is_active & is_relevant]
+        # 페이지 간 응답이 일부 겹치는 현상이 실제로 관측돼(2026-09-21), 같은 공고가
+        # 중복 노출되지 않도록 일련번호(pbanc_sn) 기준으로 제거한다.
+        if "pbanc_sn" in df.columns:
+            df = df.drop_duplicates(subset=["pbanc_sn"])
+        if df.empty:
+            return pd.DataFrame(columns=_SUPPORT_PROGRAM_COLUMNS)
+
+        return pd.DataFrame(
+            {
+                "name": df.get("biz_pbanc_nm", ""),
+                "agency": df.get("pbanc_ntrp_nm", ""),
+                "category": df.get("supt_biz_clsfc", ""),
+                "target": df.get("aply_trgt_ctnt", ""),
+                "exclude": df.get("aply_excl_trgt_ctnt", ""),
+                "apply_start": pd.to_datetime(df.get("pbanc_rcpt_bgng_dt", ""), format="%Y%m%d", errors="coerce"),
+                "apply_end": pd.to_datetime(df.get("pbanc_rcpt_end_dt", ""), format="%Y%m%d", errors="coerce"),
+                "detail_url": df.get("detl_pg_url", ""),
+                "source": "K-스타트업",
+                # biz_enyy: "예비창업자,3년미만,7년미만"처럼 대상 업력 구간을 쉼표로
+                # 나열한 구조화 필드(실제 응답으로 확인, 2026-09-21) — 업력 소프트
+                # 매칭에 쓴다(src/support_matching.py의 _fits_years).
+                "years_tag": df.get("biz_enyy", ""),
+            }
+        ).reset_index(drop=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[안내] K-Startup API 호출에 실패했습니다({exc}). 이 소스는 건너뜁니다.")
+        return None
+
+
+def load_support_program_announcements() -> pd.DataFrame:
+    """기업마당 + K-Startup 지원사업 공고를 합쳐 로드한다. 둘 다 이용 불가능하면
+    구조 검증용 가상 데이터로 대체한다(_make_fallback_support_programs 참고).
+
+    반환 컬럼: name, agency, category, target, exclude, apply_start, apply_end,
+    detail_url, source, years_tag.
+    """
+    parts = [df for df in (_fetch_bizinfo_announcements(), _fetch_kstartup_announcements()) if df is not None]
+    parts = [df for df in parts if not df.empty]
+    if not parts:
+        return _make_fallback_support_programs()
+    combined = pd.concat(parts, ignore_index=True)
+    combined["exclude"] = combined["exclude"].fillna("")
+    combined["years_tag"] = combined["years_tag"].fillna("")
+    return combined

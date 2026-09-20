@@ -9,8 +9,6 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 
-from sklearn.inspection import partial_dependence
-
 from src.config import (
     CONFIDENCE_HIGH_MIN_COMPETITORS,
     CONFIDENCE_LOW_MAX_COMPETITORS,
@@ -21,8 +19,6 @@ from src.config import (
     PRIORITY_WEIGHT_SALES,
     RANDOM_STATE,
     SAFETY_NET_PROGRAMS,
-    SIMULATION_FEATURES,
-    SIMULATION_GRID_RESOLUTION,
     SIMULATION_MODEL_PARAMS,
     TARGET_COLUMN,
     TEST_SIZE,
@@ -37,7 +33,6 @@ class TrainedModel:
     rmse: float
     r2: float
     feature_table: pd.DataFrame
-    pd_curves: dict
 
 
 def train_model(feature_table: pd.DataFrame) -> TrainedModel:
@@ -65,38 +60,15 @@ def train_model(feature_table: pd.DataFrame) -> TrainedModel:
     model = RandomForestRegressor(**MODEL_PARAMS)
     model.fit(X_train, y_train_log)
 
-    # 시뮬레이터(what-if) 전용 모델 — 학습에 없던 피처 조합으로 재예측할 때
-    # 결과가 비상식적으로 튀지 않도록 더 보수적인 하이퍼파라미터로 별도 학습한다.
+    # 예상 범위(predicted_low/predicted_high) 산출 전용 모델 — 기본 모델(min_samples_leaf=2)
+    # 그대로 트리별 예측 분산을 쓰면 잡음이 커서, 더 보수적인 하이퍼파라미터로 별도
+    # 학습한다(_predicted_range 참고).
     simulation_model = RandomForestRegressor(**SIMULATION_MODEL_PARAMS)
     simulation_model.fit(X_train, y_train_log)
 
     y_pred = np.expm1(model.predict(X_test))
     rmse = float(np.sqrt(mean_squared_error(y_test, y_pred)))
     r2 = float(r2_score(y_test, y_pred)) if len(set(y_test)) > 1 else float("nan")
-
-    # 부분의존도(Partial Dependence) 곡선을 미리 계산해둔다: 특정 행 하나의 예측을
-    # 재계산하면(predict_with_overrides) 그 행의 트리 분기 잡음에 좌우돼 결과가
-    # 비상식적으로 튈 수 있으므로, "이 피처를 바꾸면 전체 데이터 평균적으로 예측이
-    # 어떻게 변하는가"라는 안정적인 상대 곡선을 시뮬레이터에 사용한다.
-    pd_curves = {}
-    X_all = feature_table[FEATURE_COLUMNS].astype(float)
-    for feature in SIMULATION_FEATURES:
-        idx = FEATURE_COLUMNS.index(feature)
-        result = partial_dependence(
-            simulation_model,
-            X_all,
-            features=[idx],
-            grid_resolution=SIMULATION_GRID_RESOLUTION,
-            percentiles=(0, 1),  # sklearn 기본값(5~95%)이 아니라 실측 최소~최대 전체 범위를 쓴다
-            kind="average",
-        )
-        grid = result["grid_values"][0]
-        avg_sales = np.expm1(result["average"][0])
-        # 그리드 포인트가 성글고(19~20개) 표본이 작아 곡선 자체에 잔물결(비단조 잡음)이
-        # 남아있어, 3포인트 이동평균으로 살짝 다듬는다 — "정류장을 늘렸는데 어느 지점만
-        # 콕 집어 확 낮아진다" 같은 부자연스러운 굴곡을 줄이기 위함.
-        avg_sales = pd.Series(avg_sales).rolling(window=3, center=True, min_periods=1).mean().to_numpy()
-        pd_curves[feature] = (grid, avg_sales)
 
     return TrainedModel(
         model=model,
@@ -105,7 +77,6 @@ def train_model(feature_table: pd.DataFrame) -> TrainedModel:
         rmse=rmse,
         r2=r2,
         feature_table=feature_table,
-        pd_curves=pd_curves,
     )
 
 
@@ -160,117 +131,6 @@ def predict_sales(trained: TrainedModel, dong: str, category: str) -> Optional[d
     }
 
 
-def _pd_effect_ratio(trained: TrainedModel, feature: str, from_value: float, to_value: float) -> float:
-    """부분의존도 곡선에서 from_value -> to_value로 바뀔 때의 상대 배율을 구한다."""
-    if feature not in trained.pd_curves:
-        return 1.0
-    grid, avg_sales = trained.pd_curves[feature]
-    from_effect = float(np.interp(from_value, grid, avg_sales))
-    to_effect = float(np.interp(to_value, grid, avg_sales))
-    if from_effect <= 0:
-        return 1.0
-    return to_effect / from_effect
-
-
-def simulate_scenario(trained: TrainedModel, dong: str, category: str, overrides: Optional[dict] = None) -> Optional[dict]:
-    """(행정동, 업종)의 실제 예측치에, 피처를 바꿨을 때의 "평균적 효과"를 곱해 시나리오를 추정한다.
-
-    "버스정류장을 2개 늘리면 매출이 어떻게 될까?" 같은 정책 개입 what-if 시뮬레이션에 쓴다.
-    단순히 그 행 하나를 재예측하면(predict_with_overrides처럼) 트리 분기 잡음 때문에
-    작은 입력 변화에도 결과가 폭락/폭등하는 문제가 있었다(실측: 정류장 1개 추가만으로
-    -80% 급락하는 등). 대신 전체 데이터셋에서 그 피처의 부분의존도(다른 조건은 그대로
-    두고 이 피처만 바꿨을 때 평균적으로 예측이 어떻게 변하는지)를 구해, 그 "상대적
-    변화율"을 이 행의 실제(정확한) 기준 예측치에 곱하는 방식을 쓴다. 이렇게 하면
-    한 행의 우연한 트리 분기 잡음에 휘둘리지 않는, 훨씬 안정적인 시나리오 추정이 된다.
-    """
-    base = predict_sales(trained, dong, category)
-    if base is None:
-        return None
-
-    multiplier = 1.0
-    new_features = dict(base["features"])
-    for feature, new_value in (overrides or {}).items():
-        if feature not in trained.feature_columns:
-            continue
-        old_value = base["features"][feature]
-        multiplier *= _pd_effect_ratio(trained, feature, old_value, new_value)
-        new_features[feature] = new_value
-
-    return {
-        "predicted_sales": base["predicted_sales"] * multiplier,
-        "baseline_sales": base["predicted_sales"],
-        "features": new_features,
-    }
-
-
-def simulate_dong_scenario(trained: TrainedModel, dong: str, overrides: dict) -> Optional[dict]:
-    """행정동 전체(모든 업종 합산) 기준으로 정책 시나리오 효과를 추정한다.
-
-    버스정류장 확충처럼 특정 업종이 아니라 행정동 전체에 영향을 미치는 정책 개입의
-    효과를 보려면, 그 동의 모든 업종에 대해 simulate_scenario를 적용해 합산해야 한다.
-    """
-    categories = trained.feature_table.loc[trained.feature_table["dong"] == dong, "category"].unique()
-    if len(categories) == 0:
-        return None
-
-    baseline_total = 0.0
-    scenario_total = 0.0
-    for category in categories:
-        result = simulate_scenario(trained, dong, category, overrides)
-        if result:
-            baseline_total += result["baseline_sales"]
-            scenario_total += result["predicted_sales"]
-
-    if baseline_total <= 0:
-        return None
-    return {"baseline_sales": baseline_total, "predicted_sales": scenario_total}
-
-
-def simulate_priority_shift(trained: TrainedModel, dong: str, overrides: dict) -> Optional[dict]:
-    """정책 시나리오(버스정류장 확충 등)가 매출뿐 아니라 지원 우선순위·안전망 단계를
-    얼마나 바꾸는지 계산한다.
-
-    "매출이 X% 오른다"는 숫자는 정책담당자에게 그 자체로는 잘 와닿지 않는다 — 이
-    함수는 같은 시나리오를 지원우선순위 스코어 공식(_priority_from_predicted, 다른
-    30개 동과 함께 재정규화)에 그대로 통과시켜, "그래서 이 지원이 실제로 안전망
-    단계를 낮추는 데 도움이 되는가"를 보여준다. 새로운 가정이나 별도 모델을 쓰지
-    않고, 이미 검증된 매출 시뮬레이션(simulate_scenario)과 우선순위 계산 공식을
-    그대로 재사용한다 — 폐업률 자체를 직접 시뮬레이션하지 않는 이유는 CLAUDE.md
-    참고(우선순위 스코어와 관측 폐업률의 상관관계가 약하고 부호도 일정치 않아,
-    "지원하면 폐업률이 얼마나 준다"를 정량 주장하면 근거 없는 숫자가 됨).
-    """
-    predicted = predict_all(trained)
-    baseline_priority = _priority_from_predicted(predicted)
-    baseline_row = baseline_priority[baseline_priority["dong"] == dong]
-    if baseline_row.empty:
-        return None
-    baseline_row = baseline_row.iloc[0]
-
-    adjusted = predicted.copy()
-    dong_mask = adjusted["dong"] == dong
-    for idx in adjusted[dong_mask].index:
-        category = adjusted.loc[idx, "category"]
-        scenario = simulate_scenario(trained, dong, category, overrides)
-        if scenario:
-            adjusted.loc[idx, "predicted_sales"] = scenario["predicted_sales"]
-
-    new_priority = _priority_from_predicted(adjusted)
-    new_row = new_priority[new_priority["dong"] == dong]
-    if new_row.empty:
-        return None
-    new_row = new_row.iloc[0]
-
-    baseline_tier = match_safety_net(baseline_row["priority_score"])["tier"]
-    new_tier = match_safety_net(new_row["priority_score"])["tier"]
-
-    return {
-        "baseline_priority_score": float(baseline_row["priority_score"]),
-        "new_priority_score": float(new_row["priority_score"]),
-        "baseline_tier": baseline_tier,
-        "new_tier": new_tier,
-    }
-
-
 def get_feature_importance(trained: TrainedModel) -> pd.DataFrame:
     importances = trained.model.feature_importances_
     df = pd.DataFrame({"feature": trained.feature_columns, "importance": importances})
@@ -315,9 +175,7 @@ def _priority_from_predicted(predicted: pd.DataFrame) -> pd.DataFrame:
     """predict_all() 형태의 테이블(dong/category별 predicted_sales 포함)을 받아
     행정동 단위로 집계·정규화한 우선순위 스코어 테이블을 만든다.
 
-    compute_support_priority()의 실제 계산 로직이자, simulate_priority_shift()가
-    시나리오 적용 후 predicted_sales를 바꿔치기한 테이블을 같은 공식으로 재계산할 때도
-    재사용한다 — 스코어 산출 방식 자체는 절대 건드리지 않기 위해 로직을 하나로 유지한다.
+    compute_support_priority()의 실제 계산 로직이다.
     """
     dong_agg = predicted.groupby("dong", as_index=False).agg(
         avg_predicted_sales=("predicted_sales", "mean"),

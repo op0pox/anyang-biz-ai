@@ -145,6 +145,7 @@ with p1:
         unsafe_allow_html=True,
     )
     st.page_link("pages/1_매출예측_업종추천.py", label="📈 매출예측·업종추천 보러가기", width="stretch")
+    st.page_link("pages/4_지원사업매칭.py", label="🧾 지원사업 매칭 도우미 보러가기", width="stretch")
 with p2:
     st.markdown(
         """
@@ -161,10 +162,12 @@ with p2:
 
 st.write("")
 with st.expander("또는 원하는 페이지로 바로 이동"):
-    b1, b2, b3 = st.columns(3)
+    b1, b2, b3, b4 = st.columns(4)
     with b1:
         st.page_link("pages/1_매출예측_업종추천.py", label="📈 매출예측·업종추천", width="stretch")
     with b2:
         st.page_link("pages/2_지원우선순위.py", label="🗺️ 지원 우선순위", width="stretch")
     with b3:
         st.page_link("pages/3_AI리포트.py", label="🤖 AI 정책 리포트", width="stretch")
+    with b4:
+        st.page_link("pages/4_지원사업매칭.py", label="🧾 지원사업 매칭", width="stretch")

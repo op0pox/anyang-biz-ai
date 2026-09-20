@@ -100,6 +100,21 @@
     letter-spacing: 0.2px;
 }
 
+/* 같은 행(st.columns) 안의 카드들이 콘텐츠 길이에 따라 서로 다른 높이로 보이는 문제
+   — st.columns()는 행 자체(stHorizontalBlock)와 stColumn까지는 flex stretch로 높이를
+   맞추지만, 그 안쪽(stElementContainer, stMarkdown, stMarkdownContainer 등)은
+   block 요소이거나 flex-direction:column의 메인 축이라 stretch가 적용되지 않고
+   각자 자기 콘텐츠 길이대로만 늘어난다. 컬럼부터 카드까지 매 단계에 height:100%를
+   줘서 실제로 flex로 계산된 행 높이를 끝까지 물려받게 한다(st.columns 밖의 단독
+   카드는 조상이 auto 높이라 퍼센트가 무시되므로 이 규칙의 영향을 받지 않는다). */
+[data-testid="stColumn"] > [data-testid="stVerticalBlock"],
+[data-testid="stElementContainer"],
+[data-testid="stMarkdown"],
+[data-testid="stMarkdown"] > div,
+[data-testid="stMarkdownContainer"] {
+    height: 100%;
+}
+
 /* 카드형 레이아웃 */
 .anyang-card {
     background: var(--anyang-card-bg);
@@ -107,6 +122,7 @@
     border-radius: 16px;
     padding: 1.5rem 1.4rem;
     height: 100%;
+    box-sizing: border-box;
     box-shadow: 0 2px 8px rgba(20, 40, 80, 0.05);
 }
 .anyang-card .icon {
