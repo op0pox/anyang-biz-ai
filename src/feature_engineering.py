@@ -217,3 +217,62 @@ def get_available_dongs(feature_table: pd.DataFrame) -> list:
 
 def get_available_categories(feature_table: pd.DataFrame) -> list:
     return sorted(feature_table["category"].unique().tolist())
+
+
+# 업종 키워드 뒤에 흔히 붙는 접미사 — "안경제조"→"안경", "금속가공"→"금속"처럼 어근만
+# 남겨야 안양시 상호명("OO안경원", "OO금속" 등 접미사 없이 적힌 경우가 많음)과 매칭될
+# 확률이 높아진다. 접미사를 떼도 남는 게 없거나(3토큰 센터명에서 마지막 토큰만 접미사인
+# 경우, 예: "보은 식품 제조" → keyword="제조") 그 자체로는 업종을 특정할 수 없는 값은
+# 매칭을 포기한다 — 과매칭보다 놓치는 쪽이 안전하다는 판단.
+_SUPPORT_CENTER_KEYWORD_SUFFIXES = ["제조", "가공", "봉제"]
+_SUPPORT_CENTER_MIN_MATCH_COUNT = 3
+
+
+def get_other_region_support_center_examples(top_n: int = 5) -> list:
+    """안양시엔 없는 업종별 소공인 특화지원센터를, 다른 지역 실제 운영 사례와 함께
+    반환한다. "저 지역엔 있는데 안양엔 없는 지원 인프라가 뭔가"를 담당자에게 참고로
+    보여주되, 안양시에 해당 업종 자체가 없으면 추천이 무의미하므로 안양시 상가
+    상호명에 실제로 관련 업종이 존재하는 경우만 골라 최소한의 근거를 붙인다.
+    학습 피처가 아니라 지원우선순위 페이지의 참고 카드 전용이다.
+    """
+    from src.data_loader import load_specialized_support_centers, load_stores
+
+    centers = load_specialized_support_centers()
+    if centers.empty:
+        return []
+
+    others = centers[~centers["is_anyang"] & (centers["focus"] != "상생")]
+    if others.empty:
+        return []
+
+    stores = load_stores()
+    store_names = stores["name"].dropna().astype(str) if "name" in stores else pd.Series(dtype=str)
+    if store_names.empty:
+        return []
+
+    def _root(keyword: str) -> str:
+        for suffix in _SUPPORT_CENTER_KEYWORD_SUFFIXES:
+            if keyword.endswith(suffix) and len(keyword) > len(suffix):
+                return keyword[: -len(suffix)]
+        return "" if keyword in _SUPPORT_CENTER_KEYWORD_SUFFIXES else keyword
+
+    best_by_root: Dict[str, dict] = {}
+    for _, row in others.iterrows():
+        root = _root(row["keyword"])
+        if len(root) < 2:
+            continue
+        match_count = int(store_names.str.contains(root, regex=False, na=False).sum())
+        if match_count < _SUPPORT_CENTER_MIN_MATCH_COUNT:
+            continue
+        if root in best_by_root and best_by_root[root]["anyang_related_store_count"] >= match_count:
+            continue
+        best_by_root[root] = {
+            "name": row["name"],
+            "org": row["org"],
+            "address": row["address"],
+            "focus": row["focus"],
+            "anyang_related_store_count": match_count,
+        }
+
+    results = sorted(best_by_root.values(), key=lambda r: r["anyang_related_store_count"], reverse=True)
+    return results[:top_n]

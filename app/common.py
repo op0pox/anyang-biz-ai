@@ -13,6 +13,7 @@ from src.data_loader import DataFileNotFoundError  # noqa: E402
 from src.feature_engineering import (  # noqa: E402
     build_feature_table,
     compute_closure_rate_table,
+    get_other_region_support_center_examples,
     get_redevelopment_risk_by_dong,
 )
 from src.model import TrainedModel, train_model  # noqa: E402
@@ -84,6 +85,16 @@ def load_closure_rate_table():
         return table if not table.empty else None
     except Exception:  # noqa: BLE001
         return None
+
+
+@st.cache_data(show_spinner=False)
+def load_other_region_support_center_examples() -> list:
+    """안양시엔 없는 업종별 소공인 특화지원센터의 타 지역 운영 사례 조회 (캐시됨).
+    실패하거나 매칭이 없으면 빈 리스트 — 부가 참고용이라 없어도 서비스는 정상 동작해야 한다."""
+    try:
+        return get_other_region_support_center_examples()
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def show_pipeline_error(message: str):

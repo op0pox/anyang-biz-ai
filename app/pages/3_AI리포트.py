@@ -88,8 +88,18 @@ with st.spinner("AI가 리포트를 작성하고 있습니다..."):
     if not matched.empty:
         priority_row = matched.iloc[0].to_dict()
 
+    redevelopment_risk = load_redevelopment_risk().get(selected_dong)
+    closure_table = load_closure_rate_table()
+    closure_row = None
+    if closure_table is not None:
+        matched_closure = closure_table[
+            (closure_table["dong"] == selected_dong) & (closure_table["category"] == selected_category)
+        ]
+        if not matched_closure.empty:
+            closure_row = matched_closure.iloc[0]
+
     try:
-        report = generate_report(prediction, priority_row)
+        report = generate_report(prediction, priority_row, redevelopment_risk, closure_row)
     except Exception as exc:  # noqa: BLE001
         report = {
             "diagnosis": [],
@@ -162,14 +172,6 @@ st.markdown('<div class="anyang-section-title">📌 근거 데이터</div>', uns
 st.caption("AI가 문장을 지어낸 게 아니라, 아래 실제 수치를 바탕으로 해석한 결과입니다.")
 
 features = prediction["features"]
-closure_table = load_closure_rate_table()
-closure_row = None
-if closure_table is not None:
-    matched_closure = closure_table[
-        (closure_table["dong"] == selected_dong) & (closure_table["category"] == selected_category)
-    ]
-    if not matched_closure.empty:
-        closure_row = matched_closure.iloc[0]
 
 e1, e2, e3, e4, e5 = st.columns(5)
 evidence_stats = [
@@ -199,6 +201,12 @@ for col, icon, label, value, source in evidence_stats:
             unsafe_allow_html=True,
         )
 
+st.caption(
+    "※ 유동인구는 행정동별이 아니라 만안구·동안구 구 단위로만 제공되어, 같은 구에 속한 "
+    "행정동들은 값이 동일합니다. 버스정류장 수는 안양시 상가 위치 기준으로 필터링했지만 "
+    "인접 시(광명·군포·의왕 등) 정류소가 일부 섞여 있을 수 있습니다."
+)
+
 if closure_row is not None:
     st.caption(
         "※ 폐업 후보 비율은 2024년 1분기와 2026년 2분기 상가정보에서 사라진 점포 수 "
@@ -207,7 +215,6 @@ if closure_row is not None:
 elif selected_dong in {"명학동", "박달동", "병목안동", "호현동"}:
     st.caption("※ 이 행정동은 비교 기간 중 행정동 개편(명칭 변경·통합)이 있어 폐업 흐름 비교에서 제외했습니다.")
 
-redevelopment_risk = load_redevelopment_risk().get(selected_dong)
 if redevelopment_risk:
     project_names = "、".join(p["name"] for p in redevelopment_risk["projects"][:3])
     st.markdown(

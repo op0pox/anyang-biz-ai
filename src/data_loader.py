@@ -866,3 +866,56 @@ def load_redevelopment_projects() -> pd.DataFrame:
     out = out[~out["stage"].isin(REDEVELOPMENT_COMPLETED_STAGES)]
     out = out[~out["status"].isin(REDEVELOPMENT_COMPLETED_STATUSES)]
     return out.reset_index(drop=True)
+
+
+def load_specialized_support_centers() -> pd.DataFrame:
+    """전국 소공인 특화지원센터 현황(소상공인시장진흥공단 발행, 전국 데이터)을 로드한다.
+
+    안양시 데이터가 아니라 "다른 지역엔 있는데 안양엔 없는 업종별 지원 인프라"를
+    담당자에게 참고 정보로 보여주는 데만 쓴다(feature_engineering의 학습 피처가
+    아님). 소량(40건) 데이터셋이라 load_redevelopment_projects()와 같은 방식으로
+    data/sources/ 하위 폴더를 직접 스캔한다.
+
+    센터명은 "{지역} [세부지역] {업종} 소공인특화지원센터" 형태지만 토큰 개수가
+    일정하지 않아(예: "안양 전자부품..." 2토큰 vs "대전 정동 인쇄..." 3토큰) 완벽한
+    업종 파싱은 불가능하다. 마지막 토큰을 근사 키워드(keyword)로만 남기고, 전체
+    문구(focus)는 그대로 반환해 부정확한 업종 라벨을 확정적으로 보여주지 않는다.
+    """
+    from src.config import DATA_SOURCES_DIR
+
+    source_dir = DATA_SOURCES_DIR / "support_centers"
+    empty = pd.DataFrame(columns=["region", "name", "org", "address", "is_anyang", "focus", "keyword"])
+    if not source_dir.exists():
+        return empty
+
+    candidates = list(source_dir.glob("*.csv")) + list(source_dir.glob("*.xlsx")) + list(source_dir.glob("*.xls"))
+    if not candidates:
+        return empty
+
+    df = _read_table_flex(candidates[0])
+    region_col = _find_column(df, ["지역"])
+    name_col = _find_column(df, ["센터명"])
+    org_col = _find_column(df, ["주관기관명", "주관기관"])
+    address_col = _find_column(df, ["주소"])
+    if name_col is None:
+        return empty
+
+    names = df[name_col].astype(str).str.strip()
+    stripped = names.str.replace(r"\s?소공인특화지원센터$", "", regex=True).str.strip()
+    tokens = stripped.str.split()
+    focus = tokens.apply(lambda t: " ".join(t[1:]) if len(t) > 1 else (t[0] if t else ""))
+    keyword = tokens.apply(lambda t: t[-1] if len(t) > 1 else "")
+    address = df[address_col].astype(str).str.strip() if address_col else pd.Series([""] * len(df))
+    is_anyang = names.str.startswith("안양") | address.str.contains(CITY_FILTER_KEYWORD, na=False)
+
+    return pd.DataFrame(
+        {
+            "region": df[region_col].astype(str).str.strip() if region_col else "",
+            "name": names,
+            "org": df[org_col].astype(str).str.strip() if org_col else "",
+            "address": address,
+            "is_anyang": is_anyang,
+            "focus": focus,
+            "keyword": keyword,
+        }
+    )

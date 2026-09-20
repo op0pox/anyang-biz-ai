@@ -226,6 +226,51 @@ def simulate_dong_scenario(trained: TrainedModel, dong: str, overrides: dict) ->
     return {"baseline_sales": baseline_total, "predicted_sales": scenario_total}
 
 
+def simulate_priority_shift(trained: TrainedModel, dong: str, overrides: dict) -> Optional[dict]:
+    """정책 시나리오(버스정류장 확충 등)가 매출뿐 아니라 지원 우선순위·안전망 단계를
+    얼마나 바꾸는지 계산한다.
+
+    "매출이 X% 오른다"는 숫자는 정책담당자에게 그 자체로는 잘 와닿지 않는다 — 이
+    함수는 같은 시나리오를 지원우선순위 스코어 공식(_priority_from_predicted, 다른
+    30개 동과 함께 재정규화)에 그대로 통과시켜, "그래서 이 지원이 실제로 안전망
+    단계를 낮추는 데 도움이 되는가"를 보여준다. 새로운 가정이나 별도 모델을 쓰지
+    않고, 이미 검증된 매출 시뮬레이션(simulate_scenario)과 우선순위 계산 공식을
+    그대로 재사용한다 — 폐업률 자체를 직접 시뮬레이션하지 않는 이유는 CLAUDE.md
+    참고(우선순위 스코어와 관측 폐업률의 상관관계가 약하고 부호도 일정치 않아,
+    "지원하면 폐업률이 얼마나 준다"를 정량 주장하면 근거 없는 숫자가 됨).
+    """
+    predicted = predict_all(trained)
+    baseline_priority = _priority_from_predicted(predicted)
+    baseline_row = baseline_priority[baseline_priority["dong"] == dong]
+    if baseline_row.empty:
+        return None
+    baseline_row = baseline_row.iloc[0]
+
+    adjusted = predicted.copy()
+    dong_mask = adjusted["dong"] == dong
+    for idx in adjusted[dong_mask].index:
+        category = adjusted.loc[idx, "category"]
+        scenario = simulate_scenario(trained, dong, category, overrides)
+        if scenario:
+            adjusted.loc[idx, "predicted_sales"] = scenario["predicted_sales"]
+
+    new_priority = _priority_from_predicted(adjusted)
+    new_row = new_priority[new_priority["dong"] == dong]
+    if new_row.empty:
+        return None
+    new_row = new_row.iloc[0]
+
+    baseline_tier = match_safety_net(baseline_row["priority_score"])["tier"]
+    new_tier = match_safety_net(new_row["priority_score"])["tier"]
+
+    return {
+        "baseline_priority_score": float(baseline_row["priority_score"]),
+        "new_priority_score": float(new_row["priority_score"]),
+        "baseline_tier": baseline_tier,
+        "new_tier": new_tier,
+    }
+
+
 def get_feature_importance(trained: TrainedModel) -> pd.DataFrame:
     importances = trained.model.feature_importances_
     df = pd.DataFrame({"feature": trained.feature_columns, "importance": importances})
@@ -263,7 +308,17 @@ def compute_support_priority(trained: TrainedModel) -> pd.DataFrame:
     유동인구 대비 매출 효율이 낮은 행정동일수록 지원 필요도가 높다고 판단한다.
     0~100 사이로 정규화해 랭킹에 사용한다.
     """
-    predicted = predict_all(trained)
+    return _priority_from_predicted(predict_all(trained))
+
+
+def _priority_from_predicted(predicted: pd.DataFrame) -> pd.DataFrame:
+    """predict_all() 형태의 테이블(dong/category별 predicted_sales 포함)을 받아
+    행정동 단위로 집계·정규화한 우선순위 스코어 테이블을 만든다.
+
+    compute_support_priority()의 실제 계산 로직이자, simulate_priority_shift()가
+    시나리오 적용 후 predicted_sales를 바꿔치기한 테이블을 같은 공식으로 재계산할 때도
+    재사용한다 — 스코어 산출 방식 자체는 절대 건드리지 않기 위해 로직을 하나로 유지한다.
+    """
     dong_agg = predicted.groupby("dong", as_index=False).agg(
         avg_predicted_sales=("predicted_sales", "mean"),
         total_competitor_count=("competitor_count", "sum"),

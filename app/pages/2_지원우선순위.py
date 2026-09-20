@@ -13,6 +13,7 @@ if str(APP_DIR) not in sys.path:
 from common import (  # noqa: E402
     SERVICE_NAME,
     inject_css,
+    load_other_region_support_center_examples,
     load_pipeline,
     load_redevelopment_risk,
     render_topbar,
@@ -29,6 +30,7 @@ from src.model import (  # noqa: E402
     rank_categories_for_dong,
     recommend_support_type,
     simulate_dong_scenario,
+    simulate_priority_shift,
 )
 
 st.set_page_config(page_title=f"지원우선순위 | {SERVICE_NAME}", page_icon="🗺️", layout="wide")
@@ -136,17 +138,33 @@ with dc2:
         add_bus = 0
         st.write("🚌 버스정류장을 몇 개 확충하면?")
         st.caption(f"※ {detail_dong}은 이미 안양시 관측 최댓값({observed_bus_max}개) 수준이라 늘리는 시나리오를 시험해볼 수 없습니다.")
-    scenario = simulate_dong_scenario(trained, detail_dong, {"bus_stop_count": current_bus + add_bus})
-    if scenario and scenario["baseline_sales"] > 0:
-        diff_pct = 100 * (scenario["predicted_sales"] - scenario["baseline_sales"]) / scenario["baseline_sales"]
-        color = "#17A673" if diff_pct >= 0 else "#c0392b"
-        arrow = "▲" if diff_pct >= 0 else "▼"
+    overrides = {"bus_stop_count": current_bus + add_bus}
+    shift = simulate_priority_shift(trained, detail_dong, overrides)
+    scenario = simulate_dong_scenario(trained, detail_dong, overrides)
+
+    if shift:
+        tier_color_map = {"예방": "#17A673", "긴급수혈": "#E67E22", "재기지원": "#c0392b"}
+        before_color = tier_color_map[shift["baseline_tier"]]
+        after_color = tier_color_map[shift["new_tier"]]
+        score_diff = shift["new_priority_score"] - shift["baseline_priority_score"]
+        pct_line = ""
+        if scenario and scenario["baseline_sales"] > 0:
+            diff_pct = 100 * (scenario["predicted_sales"] - scenario["baseline_sales"]) / scenario["baseline_sales"]
+            pct_line = f"매출 {diff_pct:+.1f}% 변화 추정 · "
         st.markdown(
             f"""
             <div class="anyang-card" style="height:100%; text-align:center;">
-                <div style="font-size:0.8rem; color:#6B7684;">버스정류장 {add_bus}개 확충 시 {detail_dong} 전체 예상 매출 변화</div>
-                <div style="font-size:1.5rem; font-weight:800; color:{color}; margin:0.3rem 0;">{arrow} {abs(diff_pct):.1f}%</div>
-                <div style="font-size:0.72rem; color:#9AA5B1;">{scenario['baseline_sales']:,.0f}원 → {scenario['predicted_sales']:,.0f}원 (모든 업종 합산 추정)</div>
+                <div style="font-size:0.8rem; color:#6B7684; margin-bottom:0.5rem;">
+                    버스정류장 {add_bus}개 확충 시 {detail_dong} 안전망 단계
+                </div>
+                <div style="display:flex; align-items:center; justify-content:center; gap:0.5rem;">
+                    <span class="anyang-badge" style="background:{before_color}22; color:{before_color};">{shift['baseline_tier']}</span>
+                    <span style="color:#9AA5B1;">→</span>
+                    <span class="anyang-badge" style="background:{after_color}22; color:{after_color};">{shift['new_tier']}</span>
+                </div>
+                <div style="font-size:0.72rem; color:#9AA5B1; margin-top:0.6rem;">
+                    {pct_line}우선순위 스코어 {shift['baseline_priority_score']:.1f}점 → {shift['new_priority_score']:.1f}점({score_diff:+.1f})
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -157,6 +175,9 @@ with dc2:
 st.caption(
     "※ 현재 정량적으로 시뮬레이션 가능한 정책 변수는 버스정류장(대중교통 접근성)뿐입니다 — "
     "이 변수만 실측값이 촘촘해 전체 데이터 평균 효과를 안정적으로 추정할 수 있었습니다. "
+    "안전망 단계 변화는 이 매출 시뮬레이션 결과를 다른 30개 행정동과 함께 우선순위 공식에 "
+    "그대로 재적용한 것으로, 폐업률 자체를 직접 예측한 것은 아닙니다(지원-폐업률 간 실측 "
+    "인과관계를 보여줄 데이터가 없어 그 수치는 만들어내지 않습니다). "
     "그 외 지원 유형(마케팅, 임대료 지원 등)은 데이터 근거가 부족해 정성적 권고로만 제공합니다."
 )
 
@@ -170,7 +191,7 @@ st.markdown(
     f"""
     <div class="anyang-card" style="margin-top:1rem; border-left:4px solid {tier_color};">
         <div class="anyang-badge" style="background:{tier_color}22; color:{tier_color};">
-            안전망 단계: {safety_net['tier']} (스코어 {safety_net['range']})
+            현재(개입 전) 안전망 단계: {safety_net['tier']} (스코어 {safety_net['range']})
         </div>
         <h3 style="margin-top:0.7rem;">{detail_dong}에 매칭되는 지원제도</h3>
         <ul style="margin:0.4rem 0 0; padding-left:1.2rem; font-size:0.9rem; color:#1B2430;">
@@ -207,6 +228,34 @@ if st.button(f"🤖 {detail_dong} AI 정책분석 리포트 보러가기", key="
     if not ranking_for_dong.empty:
         st.session_state["report_category"] = ranking_for_dong.iloc[0]["category"]
     st.switch_page("pages/3_AI리포트.py")
+
+other_region_examples = load_other_region_support_center_examples()
+if other_region_examples:
+    st.markdown('<div class="anyang-section-title">💡 타 지역 사례 참고</div>', unsafe_allow_html=True)
+    st.caption(
+        "안양시에 아직 없는 업종별 소공인 특화지원센터를 다른 지역 운영 사례와 함께 보여줍니다. "
+        "안양시 상가 상호명에서 관련 업종이 실제로 존재하는 경우만 골라냈습니다(전체 시 단위 참고 —"
+        " 특정 행정동과 연결된 정보는 아닙니다)."
+    )
+    for ex in other_region_examples:
+        st.markdown(
+            f"""
+            <div class="anyang-card" style="margin-bottom:0.6rem;">
+                <b>{ex['name']}</b>
+                <span style="color:#6B7684; font-size:0.8rem;">— {ex['org']}</span>
+                <div style="font-size:0.8rem; color:#6B7684; margin-top:0.2rem;">{ex['address']}</div>
+                <div style="font-size:0.78rem; color:#0B5ED7; margin-top:0.35rem;">
+                    안양시 내 관련 업종("{ex['focus']}") 추정 상호 {ex['anyang_related_store_count']}건 확인
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.caption(
+        "출처: 소상공인시장진흥공단_전국 소공인 특화지원센터 현황(data.go.kr). "
+        "업종명은 센터명에서 근사 추출한 것이라 부정확할 수 있고, 매칭 건수는 상호명 키워드 "
+        "포함 여부로 추정한 참고 수치입니다."
+    )
 
 st.markdown('<div class="anyang-section-title">우선순위 스코어 비교</div>', unsafe_allow_html=True)
 chart_df = display_df[["dong", "priority_score"]].set_index("dong")
@@ -283,4 +332,9 @@ with st.expander("🔍 스코어 산출 방식 상세 — 가중치는 왜 이�
         ],
         width="stretch",
         hide_index=True,
+    )
+    st.caption(
+        "※ floating_population(유동인구)은 만안구·동안구 구 단위로만 제공되어 같은 구의 "
+        "행정동은 값이 동일합니다. bus_stop_count(버스정류장)는 인접 시(광명·군포·의왕 등) "
+        "정류소가 일부 섞여 있을 수 있습니다."
     )

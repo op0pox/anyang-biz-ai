@@ -30,10 +30,18 @@ SYSTEM_PROMPT = """\
 - diagnosis: 이 지역/업종 상황에 대한 핵심 진단 2~3개
 - evidence_commentary: 근거 수치가 시사하는 바에 대한 해석 2~3개
 - recommendations: 정책적 시사점/추천 조치 2~4개 (행정 지원 관점 + 창업자 관점 섞어서)
+- JSON에 "정비사업_인접_리스크" 또는 "최근_폐업_후보_비율" 필드가 있으면, 그 의미를
+  diagnosis나 evidence_commentary 중 한 곳에 반드시 반영하세요(안양시가 이 지역에서만
+  직접 확인한 특화 신호이므로 누락하지 마세요). 두 필드가 없으면 언급하지 마세요.
 """
 
 
-def _build_payload(prediction: dict, priority_row: Optional[dict] = None) -> dict:
+def _build_payload(
+    prediction: dict,
+    priority_row: Optional[dict] = None,
+    redevelopment_risk: Optional[dict] = None,
+    closure_row=None,
+) -> dict:
     payload = {
         "행정동": prediction["dong"],
         "업종": prediction["category"],
@@ -52,6 +60,13 @@ def _build_payload(prediction: dict, priority_row: Optional[dict] = None) -> dic
             "행정동_평균_예상매출": round(priority_row.get("avg_predicted_sales", 0)),
             "행정동_전체_경쟁점포수": priority_row.get("total_competitor_count"),
         }
+    if redevelopment_risk:
+        payload["정비사업_인접_리스크"] = {
+            "반경_500m_내_사업수": redevelopment_risk.get("count"),
+            "영향_세대수": redevelopment_risk.get("total_households"),
+        }
+    if closure_row is not None:
+        payload["최근_폐업_후보_비율_퍼센트"] = round(float(closure_row["closure_rate"]) * 100, 1)
     return payload
 
 
@@ -66,6 +81,8 @@ def _offline_fallback_report(payload: dict) -> dict:
     floating = features.get("유동인구_가중합", 0) or 0
     bus = features.get("버스정류장_접근성", 0) or 0
     priority = payload.get("지원_우선순위")
+    redevelopment = payload.get("정비사업_인접_리스크")
+    closure_pct = payload.get("최근_폐업_후보_비율_퍼센트")
 
     diagnosis = [f"{dong} '{category}' 예상 매출액은 약 {sales:,.0f}원입니다."]
     if priority:
@@ -74,6 +91,11 @@ def _offline_fallback_report(payload: dict) -> dict:
         diagnosis.append(f"소상공인 지원 우선순위 {score}점으로 {level} 구간입니다.")
     else:
         diagnosis.append("행정동 단위 우선순위 비교 데이터는 제공되지 않았습니다.")
+    if redevelopment:
+        diagnosis.append(
+            f"반경 500m 내 정비사업 {redevelopment['반경_500m_내_사업수']}건(총 "
+            f"{redevelopment['영향_세대수']:,}세대)이 진행 중이라 향후 유동인구 변화 가능성이 있습니다."
+        )
 
     evidence_commentary = []
     if competitor >= 10:
@@ -84,6 +106,11 @@ def _offline_fallback_report(payload: dict) -> dict:
         evidence_commentary.append(
             "유동인구 대비 대중교통 접근성이 낮은 편입니다." if bus < 3 else "유동인구와 대중교통 접근성이 모두 양호한 편입니다."
         )
+    if closure_pct is not None:
+        if closure_pct >= 20:
+            evidence_commentary.append(f"최근 폐업 후보 비율이 {closure_pct}%로 높은 편이라 상권 위축 신호로 볼 수 있습니다.")
+        else:
+            evidence_commentary.append(f"최근 폐업 후보 비율은 {closure_pct}%로 비교적 안정적인 편입니다.")
 
     recommendations = []
     if competitor >= 10:
@@ -94,6 +121,10 @@ def _offline_fallback_report(payload: dict) -> dict:
         recommendations.append("대중교통 접근성 개선(버스 노선 확충 등)이 매출에 도움될 수 있습니다.")
     if priority and priority["우선순위_스코어_0to100"] >= 66:
         recommendations.append("임대료 지원·컨설팅 등 예산 배정을 우선 검토하세요.")
+    if redevelopment:
+        recommendations.append("정비사업 이주 시점을 모니터링해 유동인구 급변에 선제 대응하세요.")
+    if closure_pct is not None and closure_pct >= 20:
+        recommendations.append("폐업 위험이 높은 상권이므로 조기 경보 차원의 컨설팅 개입을 검토하세요.")
     if not recommendations:
         recommendations.append("현재 데이터 기준으로는 특별한 우선 조치가 필요하지 않습니다.")
 
@@ -124,14 +155,21 @@ def _validate_llm_report(data: dict) -> dict:
     }
 
 
-def generate_report(prediction: dict, priority_row: Optional[dict] = None) -> dict:
+def generate_report(
+    prediction: dict,
+    priority_row: Optional[dict] = None,
+    redevelopment_risk: Optional[dict] = None,
+    closure_row=None,
+) -> dict:
     """예측 결과를 바탕으로 AI 정책분석 리포트를 생성한다.
 
     반환값은 {"diagnosis": [...], "evidence_commentary": [...], "recommendations": [...],
     "source": "openai"|"offline", "notice": (선택, 실패 사유)} 형태의 dict.
     OPENAI_API_KEY가 있으면 LLM 호출, 없거나 실패하면 오프라인 규칙 기반 리포트로 폴백한다.
+    redevelopment_risk/closure_row는 안양시 특화 신호(정비사업 인접 리스크, 폐업 흐름
+    통계)로, 있을 때만 진단/근거 해석에 반영된다(TODO였던 "AI 리포트 구체성 강화").
     """
-    payload = _build_payload(prediction, priority_row)
+    payload = _build_payload(prediction, priority_row, redevelopment_risk, closure_row)
     api_key = os.environ.get("OPENAI_API_KEY")
 
     if not api_key:

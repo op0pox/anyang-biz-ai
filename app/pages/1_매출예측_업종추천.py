@@ -11,7 +11,15 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 from common import SERVICE_NAME, inject_css, load_pipeline, render_topbar, show_pipeline_error  # noqa: E402
-from src.model import get_feature_importance, predict_sales, rank_categories_for_dong, simulate_scenario  # noqa: E402
+from src.model import (  # noqa: E402
+    compute_support_priority,
+    get_feature_importance,
+    match_safety_net,
+    predict_sales,
+    rank_categories_for_dong,
+    recommend_support_type,
+    simulate_scenario,
+)
 
 st.set_page_config(page_title=f"매출예측·업종추천 | {SERVICE_NAME}", page_icon="📈", layout="wide")
 inject_css()
@@ -89,6 +97,63 @@ else:
             </div>
             """,
             unsafe_allow_html=True,
+        )
+        st.caption(
+            "※ 유동인구는 만안구·동안구 구 단위로만 제공되어 같은 구의 행정동은 값이 "
+            "동일합니다. 버스정류장 수는 인접 시(광명·군포·의왕 등) 정류소가 일부 섞여 "
+            "있을 수 있습니다."
+        )
+
+if result is not None:
+    st.markdown('<div class="anyang-section-title">🎯 지금 이 동네에서 받을 수 있는 지원</div>', unsafe_allow_html=True)
+    st.caption("우리 가게가 있는 행정동 기준으로, 어떤 지원이 맞는지와 얼마나 급한 단계인지 확인하세요.")
+
+    FACTOR_LABELS = {"sales": "매출 부진", "competition": "경쟁 강도", "efficiency": "매출 효율"}
+    priority_df = compute_support_priority(trained)
+    matched_priority = priority_df[priority_df["dong"] == selected_dong]
+
+    if matched_priority.empty:
+        st.info("이 행정동은 지원 매칭에 필요한 데이터가 부족합니다.")
+    else:
+        priority_row = matched_priority.iloc[0].to_dict()
+        recommendation = recommend_support_type(priority_row)
+        safety_net = match_safety_net(priority_row["priority_score"])
+        tier_color = {"예방": "#17A673", "긴급수혈": "#E67E22", "재기지원": "#c0392b"}[safety_net["tier"]]
+
+        s1, s2 = st.columns(2)
+        with s1:
+            st.markdown(
+                f"""
+                <div class="anyang-card" style="height:100%;">
+                    <div class="anyang-badge">진단: {FACTOR_LABELS[recommendation['dominant_factor']]} 요인이 가장 큼</div>
+                    <h3 style="margin-top:0.7rem;">{recommendation['title']}</h3>
+                    <p style="font-size:0.9rem; color:#1B2430; line-height:1.5;">{recommendation['description']}</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with s2:
+            program_rows = "".join(
+                f"""<li style="margin-bottom:0.4rem;"><b>{p['name']}</b> — {p['description']}</li>"""
+                for p in safety_net["programs"]
+            )
+            st.markdown(
+                f"""
+                <div class="anyang-card" style="height:100%; border-left:4px solid {tier_color};">
+                    <div class="anyang-badge" style="background:{tier_color}22; color:{tier_color};">
+                        안전망 단계: {safety_net['tier']} (스코어 {safety_net['range']})
+                    </div>
+                    <h3 style="margin-top:0.7rem;">매칭되는 지원제도</h3>
+                    <ul style="margin:0.4rem 0 0; padding-left:1.2rem; font-size:0.9rem; color:#1B2430;">
+                        {program_rows}
+                    </ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        st.caption(
+            f"※ {selected_dong} 행정동 전체 기준 지원우선순위 스코어({priority_row['priority_score']:.1f}점)를 "
+            "바탕으로 매칭했습니다 — 특정 업종이 아니라 행정동 단위 지표입니다."
         )
 
 if result is not None:
@@ -233,4 +298,8 @@ with st.expander("🔍 모델 상세정보 (피처 중요도 등)"):
     st.write(f"모델: RandomForestRegressor · RMSE: {trained.rmse:,.0f} · R²: {trained.r2:.3f}")
     importance_df = get_feature_importance(trained)
     st.dataframe(importance_df, width="stretch", hide_index=True)
-    st.caption("R²는 가상 데이터 기준 참고값입니다. 실제 데이터로 교체 후 재학습하면 유의미한 값을 얻을 수 있습니다.")
+    st.caption(
+        "R²는 실측 데이터(카드소비·상가정보·인구·버스정류장·유동인구) 기준 값입니다. "
+        "소수의 대형 점포가 매출 분포를 크게 왜곡해 log1p 변환 후 학습했으며, "
+        "행정동×업종 단위 상권 특성 예측에서 통상적으로 관측되는 수준입니다."
+    )
