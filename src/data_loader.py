@@ -261,6 +261,14 @@ def get_dong_gu_map() -> dict:
 def _load_card_sales_one_file(path: Path) -> pd.DataFrame:
     """카드소비 데이터 파일 하나를 (dong, category, sales_amount, sales_count)로 집계한다."""
     columns = _peek_header(path)
+
+    # 배포용으로 미리 (dong, category) 단위로 집계해둔 파일이면 그대로 반환한다 —
+    # 원본은 일별x시간대x성별x연령대까지 쪼개진 수백MB짜리 파일이라 Streamlit Cloud
+    # 무료 티어(RAM 1GB)에 올리기 어려워, scripts/prepare_deploy_data.py로 로컬에서
+    # 미리 집계해둔 결과(data/deploy/card_sales_agg.csv)를 대신 쓴다.
+    if {"dong", "category", "sales_amount", "sales_count"}.issubset(set(columns)):
+        return _read_table_flex(path, usecols=["dong", "category", "sales_amount", "sales_count"])
+
     hints = COLUMN_HINTS["card_sales"]
     dong_col = _find_column_name(columns, hints["dong"])
     category_col = _find_column_name(columns, hints["category"])

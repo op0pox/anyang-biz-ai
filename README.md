@@ -74,7 +74,49 @@ streamlit run app/app.py
 OPENAI_API_KEY=sk-...        # 없으면 오프라인 규칙 기반 리포트로 대체
 GG_OPEN_API_KEY=...          # 경기데이터드림 유동인구 API — 없으면 가상 데이터로 대체
 BUS_API_KEY=...              # 국토교통부 TAGO 버스정류소 API — 없으면 가상 데이터로 대체
+KSTARTUP_API_KEY=...         # K-Startup 통합공고 API — 없으면 지원사업 매칭이 가상 공고로 대체
+BIZINFO_API_KEY=...          # 기업마당 지원사업정보 API — 없으면 지원사업 매칭이 가상 공고로 대체
 ```
+
+## 배포 방법 (Streamlit Community Cloud)
+
+무료로 배포할 수 있습니다. 다만 원본 실데이터(`data/sources/`)는 상가정보 2개
+분기(경기도 전체, 각 300MB대)·카드소비 3개월치(각 90~110MB대)를 포함해 총
+1GB에 육박해 GitHub 파일당 100MB 제한을 넘고, Streamlit Cloud 무료 티어(RAM 1GB)
+에서 그대로 읽으면 메모리 초과로 죽을 수 있습니다. 그래서 안양시분만 남긴 훨씬
+작은 버전(`data/deploy/`, 총 30MB 미만)을 따로 관리합니다.
+
+1. **배포용 데이터 준비** (원본이 바뀌었을 때만 다시 실행):
+   ```bash
+   ./venv-anyang/bin/python scripts/prepare_deploy_data.py
+   ```
+   상가정보 2개 분기는 시군구명에 "안양시"가 들어간 행만(실측 약 4.2%, 350MB→14MB),
+   카드소비는 이미 있는 `data_loader._load_card_sales_one_file()` 로직을 그대로
+   재사용해 (행정동, 업종) 단위로 미리 집계합니다(1.3M행→250행). 결과는
+   `data/deploy/`에 저장되고, 이 폴더는 `.gitignore` 대상이 아니라 그대로
+   git에 커밋합니다.
+2. **GitHub에 push** (`data/deploy/`가 커밋에 포함됐는지 확인).
+3. [share.streamlit.io](https://share.streamlit.io)에서 GitHub 계정 연동 → 이
+   레포 선택 → main file path는 `app/app.py`로 지정 → Deploy.
+4. **Secrets 등록**: 앱 설정(Settings → Secrets)에 `.env`와 동일한 키를
+   TOML 형식으로 붙여넣습니다(Streamlit Cloud는 이 값들을 `os.environ`으로도
+   그대로 노출하므로 코드 수정이 필요 없습니다).
+   ```toml
+   OPENAI_API_KEY = "sk-..."
+   GG_OPEN_API_KEY = "..."
+   BUS_API_KEY = "..."
+   KSTARTUP_API_KEY = "..."
+   BIZINFO_API_KEY = "..."
+   ```
+5. 첫 실행 시 `src/config.py`의 `_ensure_deploy_data()`가 `data/deploy/`의
+   파일들을 `data/raw/`·`data/sources/` 하위로 자동 복사합니다(로컬 개발
+   환경처럼 이미 실데이터 심볼릭 링크가 있으면 아무 것도 하지 않고 건너뜁니다
+   — 로컬과 배포 환경이 같은 코드로 동작하되 데이터 크기만 다릅니다).
+
+**검증 방법**: `data/raw/`·`data/sources/`를 통째로 옮겨 "새로 클론한 상태"를
+재현한 뒤 `data/deploy/`만으로 파이프라인이 동일한 결과(같은 R², 같은 우선순위
+랭킹)를 내는지 실제로 확인했습니다 — 안양시 행만 걸러낸 것이라 정보 손실 없이
+결과가 100% 동일합니다.
 
 ## 실제 데이터로 교체하는 방법
 
@@ -157,7 +199,8 @@ anyang-biz-ai/
 ├── data/
 │   ├── raw/            # 파이프라인이 실제로 읽는 곳 (심볼릭 링크, git 미포함)
 │   ├── processed/
-│   └── sources/        # 원본 다운로드 파일 원본 보관 (데이터셋별 폴더, git 미포함)
+│   ├── sources/        # 원본 다운로드 파일 원본 보관 (데이터셋별 폴더, git 미포함)
+│   └── deploy/         # 배포용 안양시 필터링 축소본 (git 포함, 총 30MB 미만)
 ├── docs/                # 경진대회 공고문·제출서류 양식·API 가이드·기획서 초안
 ├── src/
 │   ├── config.py               # 경로, 파일 매핑, 피처/모델 설정,

@@ -5,8 +5,6 @@ streamlit
 folium
 streamlit-folium
 openai
-geopandas
-shapely
 requests
 python-dotenv
 openpyxl

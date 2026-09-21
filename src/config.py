@@ -1,5 +1,6 @@
 """프로젝트 공통 설정: 경로, 데이터 파일 매핑, 피처 목록, 모델 하이퍼파라미터."""
 
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -11,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_RAW_DIR = PROJECT_ROOT / "data" / "raw"
 DATA_PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 DATA_SOURCES_DIR = PROJECT_ROOT / "data" / "sources"
+DATA_DEPLOY_DIR = PROJECT_ROOT / "data" / "deploy"
 
 DATA_RAW_DIR.mkdir(parents=True, exist_ok=True)
 DATA_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
@@ -18,6 +20,63 @@ DATA_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 # config.py는 다른 모든 모듈이 가장 먼저 임포트하므로, 여기서 .env를 로드해두면
 # OPENAI_API_KEY/GG_OPEN_API_KEY/BUS_API_KEY 등이 프로젝트 어디서든 os.environ으로 보인다.
 load_dotenv(PROJECT_ROOT / ".env")
+
+
+def _ensure_deploy_data() -> None:
+    """Streamlit Cloud 등 새로 클론한 환경에서 data/raw·data/sources가 비어 있으면
+    (로컬 전용 심볼릭 링크는 .gitignore돼 있어 클론 직후엔 없음) data/deploy/의
+    안양시만 필터링한 작은 실데이터로 채운다(scripts/prepare_deploy_data.py 참고).
+
+    로컬 개발 환경처럼 대상 파일이 이미 있으면(심볼릭 링크 등) 아무것도 하지 않는다
+    — 전체 데이터를 쓰는 로컬 개발 흐름을 건드리지 않기 위함.
+    """
+    if not DATA_DEPLOY_DIR.exists():
+        return
+
+    # card_sales는 로컬 개발 환경에 card_sales_202601.csv 같은 월별 심볼릭 링크
+    # 여러 개로 이미 존재할 수 있어(정확한 이름이 card_sales_agg.csv가 아님),
+    # "card_sales*.csv" 패턴으로 이미 있는지부터 따로 확인한다 — 그렇지 않으면
+    # 로컬 월별 원본과 배포용 집계본이 동시에 존재해 이중 집계될 수 있다.
+    if not list(DATA_RAW_DIR.glob("card_sales*.csv")):
+        agg_src = DATA_DEPLOY_DIR / "card_sales_agg.csv"
+        if agg_src.exists():
+            shutil.copyfile(agg_src, DATA_RAW_DIR / "card_sales_agg.csv")
+
+    # data/raw/ 아래 단일 파일들 — RAW_FILE_STEMS가 정확한 파일명으로 찾으므로
+    # 정확한 이름으로 이미 있는지(로컬 심볼릭 링크 등)만 확인하면 충분하다.
+    single_file_mapping = {
+        DATA_DEPLOY_DIR / "stores_202606.csv": DATA_RAW_DIR / "stores.csv",
+        DATA_DEPLOY_DIR / "resident_population.xlsx": DATA_RAW_DIR / "resident_population.xlsx",
+        DATA_DEPLOY_DIR / "bus_stops.csv": DATA_RAW_DIR / "bus_stops.csv",
+        DATA_DEPLOY_DIR / "floating_population.csv": DATA_RAW_DIR / "floating_population.csv",
+    }
+    for src, dest in single_file_mapping.items():
+        if dest.exists() or not src.exists():
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+
+    # data/sources/ 하위 폴더들(정비사업·폐업통계 스냅샷·특화지원센터)은 로더가
+    # "폴더 안 첫 csv"를 그대로 쓰므로(load_redevelopment_projects 등), 정확한
+    # 파일명이 아니라 "그 폴더에 파일이 이미 있는지"로 확인해야 한다 — 그렇지
+    # 않으면 로컬 원본(다른 파일명)과 배포용 파일이 같은 폴더에 같이 남아
+    # 어느 게 쓰일지 불확실해진다.
+    folder_mapping = {
+        DATA_DEPLOY_DIR / "stores_202403.csv": DATA_SOURCES_DIR / "stores" / "202403" / "stores_202403.csv",
+        DATA_DEPLOY_DIR / "redevelopment.csv": DATA_SOURCES_DIR / "redevelopment" / "redevelopment.csv",
+        DATA_DEPLOY_DIR / "support_centers.csv": DATA_SOURCES_DIR / "support_centers" / "support_centers.csv",
+    }
+    for src, dest in folder_mapping.items():
+        if not src.exists():
+            continue
+        existing = list(dest.parent.glob("*.csv")) + list(dest.parent.glob("*.xlsx")) + list(dest.parent.glob("*.xls"))
+        if existing:
+            continue
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+
+
+_ensure_deploy_data()
 
 # ---------------------------------------------------------------------------
 # 원본 데이터 파일 stem (확장자 없이) — data/raw/ 아래 이 이름 + .csv/.xlsx/.xls
